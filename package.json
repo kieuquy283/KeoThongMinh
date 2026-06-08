@@ -1,0 +1,16 @@
+{
+  "name": "keobot-root",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "backend:dev": "cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000",
+    "frontend:dev": "cd frontend && npm run dev",
+    "desktop:dev": "cd desktop && npm run dev",
+    "app:dev": "concurrently \"npm run frontend:dev\" \"npm run desktop:dev\"",
+    "frontend:build": "cd frontend && npm run build",
+    "desktop:build": "cd desktop && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

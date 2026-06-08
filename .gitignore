@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+
+# FastAPI runtime
+backend/tmp/
+backend/build/
+backend/app/static/audio/*.mp3
+backend/app/static/audio/*.wav
+backend/app/static/audio/*.webm
+backend/app/static/audio/*.m4a
+
+# Electron / desktop
+desktop/node_modules/
+desktop/dist/
+release/
+*.exe
+*.blockmap
+*.msi
+*.AppImage
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logs
+*.log
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/

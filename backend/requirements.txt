@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+pydantic
+edge-tts
+openai
+google-generativeai
+aiofiles
+httpx
+pytest
+pyinstaller
