@@ -8,12 +8,13 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def app_module(monkeypatch):
+def app_module(monkeypatch, tmp_path):
     monkeypatch.setenv("STT_PROVIDER", "mock")
     monkeypatch.setenv("LLM_PROVIDER", "local")
     monkeypatch.setenv("TTS_PROVIDER", "edge_tts")
     monkeypatch.setenv("MOCK_STT_TEXT", "KeoBot oi, ban la ai?")
     monkeypatch.setenv("BACKEND_PORT", "8000")
+    monkeypatch.setenv("KEOBOT_DATA_DIR", str(tmp_path / "data"))
 
     config_module = importlib.import_module("app.config")
     config_module = importlib.reload(config_module)
@@ -23,6 +24,10 @@ def app_module(monkeypatch):
         "app.providers.stt",
         "app.providers.llm",
         "app.providers.tts",
+        "app.services.chat_flow",
+        "app.services.memory_parser",
+        "app.services.memory_store",
+        "app.services.reminder_store",
         "app.services.voice_chat",
         "app.main",
     ):

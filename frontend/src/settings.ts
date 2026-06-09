@@ -7,6 +7,11 @@ export const DEFAULT_SETTINGS: KeoBotSettings = {
   OPENAI_API_KEY: "",
   GEMINI_API_KEY: "",
   GOOGLE_API_KEY: "",
+  WEATHER_PROVIDER: "none",
+  OPENWEATHER_API_KEY: "",
+  SEARCH_PROVIDER: "none",
+  TAVILY_API_KEY: "",
+  SERPAPI_API_KEY: "",
   EDGE_TTS_VOICE: "vi-VN-HoaiMyNeural",
 };
 

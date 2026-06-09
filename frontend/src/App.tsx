@@ -1,16 +1,32 @@
 import { useEffect, useRef, useState } from "react";
+import { deleteReminder, fetchReminders } from "./api";
 import { ChatPanel } from "./components/ChatPanel";
-import { KeoBotPlaceholder } from "./components/KeoBotPlaceholder";
+import { KeoBotMascot } from "./components/KeoBotMascot";
+import { MemoryPanel } from "./components/MemoryPanel";
+import { ReminderPanel } from "./components/ReminderPanel";
+import { ReminderToast } from "./components/ReminderToast";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { VoiceRecorder } from "./components/VoiceRecorder";
 import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
-import type { ConversationState, KeoBotSettings, VoiceChatResponse, VoiceStatus } from "./types";
+import type {
+  AutoConversationStatus,
+  ConversationMode,
+  ConversationState,
+  KeoBotReminder,
+  KeoBotSettings,
+  VoiceChatResponse,
+  VoiceStatus,
+} from "./types";
 
 const INITIAL_CONVERSATION: ConversationState = {
   userText: "",
   botText: "",
   emotion: "neutral",
   audioUrl: "",
+  toolUsed: "none",
+  toolResult: null,
+  sources: [],
+  updatedAt: null,
 };
 
 const STATUS_LABELS: Record<VoiceStatus, string> = {
@@ -40,10 +56,35 @@ export default function App() {
   const [conversation, setConversation] = useState<ConversationState>(INITIAL_CONVERSATION);
   const [error, setError] = useState<string | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const [conversationMode, setConversationMode] = useState<ConversationMode>("manual");
+  const [autoStatus, setAutoStatus] = useState<AutoConversationStatus>("off");
   const [showSettings, setShowSettings] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
+  const [showReminders, setShowReminders] = useState(false);
   const [desktopSettings, setDesktopSettings] = useState<KeoBotSettings>(DEFAULT_SETTINGS);
+  const [reminders, setReminders] = useState<KeoBotReminder[]>([]);
+  const [remindersLoading, setRemindersLoading] = useState(false);
+  const [remindersError, setRemindersError] = useState<string | null>(null);
+  const [dueReminder, setDueReminder] = useState<KeoBotReminder | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isDesktopMode = getDesktopMode();
+
+  const loadReminders = async () => {
+    setRemindersLoading(true);
+    setRemindersError(null);
+    try {
+      const items = await fetchReminders();
+      setReminders(items);
+    } catch (loadError) {
+      setRemindersError(loadError instanceof Error ? loadError.message : "Không thể tải reminders.");
+    } finally {
+      setRemindersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadReminders();
+  }, []);
 
   useEffect(() => {
     if (!isDesktopMode || !window.keobotDesktop) {
@@ -61,6 +102,21 @@ export default function App() {
 
     return () => {
       active = false;
+    };
+  }, [isDesktopMode]);
+
+  useEffect(() => {
+    if (!isDesktopMode || !window.keobotDesktop?.onReminderDue) {
+      return;
+    }
+
+    const unsubscribe = window.keobotDesktop.onReminderDue((reminder) => {
+      setDueReminder(reminder);
+      void loadReminders();
+    });
+
+    return () => {
+      unsubscribe();
     };
   }, [isDesktopMode]);
 
@@ -93,13 +149,25 @@ export default function App() {
     }
   };
 
+  const stopResponseAudio = () => {
+    audioRef.current?.pause();
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+    }
+    setStatus("idle");
+  };
+
   useEffect(() => {
+    if (conversationMode === "auto") {
+      return;
+    }
+
     if (!conversation.audioUrl) {
       return;
     }
 
     void playResponseAudio(conversation.audioUrl);
-  }, [conversation.audioUrl]);
+  }, [conversation.audioUrl, conversationMode]);
 
   const handleVoiceResponse = (response: VoiceChatResponse) => {
     setConversation({
@@ -107,10 +175,22 @@ export default function App() {
       botText: response.bot_text,
       emotion: response.emotion,
       audioUrl: response.audio_url,
+      toolUsed: response.tool_used ?? "none",
+      toolResult: response.tool_result ?? null,
+      sources: response.sources ?? [],
+      updatedAt: response.updated_at ?? null,
     });
     setError(null);
     setAudioBlocked(false);
     setStatus("speaking");
+
+    if (response.action === "reminder_created" && response.reminder) {
+      const createdReminder = response.reminder;
+      setReminders((current) => {
+        const next = current.filter((item) => item.id !== createdReminder.id);
+        return [...next, createdReminder].sort((left, right) => left.remind_at.localeCompare(right.remind_at));
+      });
+    }
   };
 
   const handleRecorderError = (message: string | null) => {
@@ -120,8 +200,34 @@ export default function App() {
     }
   };
 
+  const handleDeleteReminder = async (reminderId: number) => {
+    await deleteReminder(reminderId);
+    setReminders((current) => current.filter((item) => item.id !== reminderId));
+  };
+
   const statusMessage = error && status === "error" ? error : STATUS_MESSAGES[status];
   const providerSnapshot = desktopSettings ?? DEFAULT_SETTINGS;
+
+  let mascotStatus: "idle" | "listening" | "thinking" | "speaking" | "error" = "idle";
+  if (conversationMode === "auto") {
+    if (autoStatus === "listening" || autoStatus === "speech_detected" || autoStatus === "silence_wait") {
+      mascotStatus = "listening";
+    } else if (autoStatus === "sending" || autoStatus === "thinking") {
+      mascotStatus = "thinking";
+    } else if (autoStatus === "speaking") {
+      mascotStatus = "speaking";
+    } else if (autoStatus === "error") {
+      mascotStatus = "error";
+    }
+  } else if (status === "recording") {
+    mascotStatus = "listening";
+  } else if (status === "uploading" || status === "thinking") {
+    mascotStatus = "thinking";
+  } else if (status === "speaking") {
+    mascotStatus = "speaking";
+  } else if (status === "error") {
+    mascotStatus = "error";
+  }
 
   return (
     <main className="app-shell">
@@ -138,9 +244,17 @@ export default function App() {
             </p>
           </div>
 
-          <button className="action-button secondary hero-settings" type="button" onClick={() => setShowSettings((current) => !current)}>
-            Cài đặt
-          </button>
+          <div className="hero-actions">
+            <button className="action-button secondary" type="button" onClick={() => setShowReminders((current) => !current)}>
+              Reminders
+            </button>
+            <button className="action-button secondary" type="button" onClick={() => setShowMemory((current) => !current)}>
+              Memory
+            </button>
+            <button className="action-button secondary hero-settings" type="button" onClick={() => setShowSettings((current) => !current)}>
+              Cài đặt
+            </button>
+          </div>
         </div>
 
         <div className="provider-strip" aria-label="Current provider configuration">
@@ -172,8 +286,21 @@ export default function App() {
         )
       ) : null}
 
+      {showReminders ? (
+        <ReminderPanel
+          reminders={reminders}
+          loading={remindersLoading}
+          error={remindersError}
+          onClose={() => setShowReminders(false)}
+          onRefresh={() => void loadReminders()}
+          onDelete={(reminderId) => void handleDeleteReminder(reminderId)}
+        />
+      ) : null}
+
+      {showMemory ? <MemoryPanel onClose={() => setShowMemory(false)} /> : null}
+
       <section className="grid">
-        <KeoBotPlaceholder status={status} statusLabel={STATUS_LABELS[status]} statusMessage={statusMessage} />
+        <KeoBotMascot status={mascotStatus} emotion={conversation.emotion} />
         <ChatPanel
           userText={conversation.userText}
           botText={conversation.botText}
@@ -181,6 +308,10 @@ export default function App() {
           statusMessage={statusMessage}
           error={error}
           audioUrl={conversation.audioUrl}
+          toolUsed={conversation.toolUsed}
+          toolResult={conversation.toolResult}
+          sources={conversation.sources}
+          updatedAt={conversation.updatedAt}
           audioBlocked={audioBlocked}
           onPlayAudio={() => void playResponseAudio()}
         />
@@ -193,6 +324,9 @@ export default function App() {
             onStatusChange={setStatus}
             onResponse={handleVoiceResponse}
             onError={handleRecorderError}
+            onStopSpeaking={stopResponseAudio}
+            onModeChange={setConversationMode}
+            onAutoStatusChange={setAutoStatus}
           />
           <div className="status-pill recorder-status" aria-live="polite">
             <span className="status-dot" />
@@ -200,6 +334,10 @@ export default function App() {
           </div>
         </div>
       </section>
+
+      {dueReminder ? (
+        <ReminderToast reminder={dueReminder} onDismiss={() => setDueReminder(null)} />
+      ) : null}
     </main>
   );
 }

@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from app.providers.llm import generate_keobot_response, generate_keobot_tool_response
+from app.services.memory_parser import parse_memory_text
+from app.services.memory_store import get_memory_store
+from app.services.reminder_parser import parse_reminder_text
+from app.services.reminder_store import Reminder, get_reminder_store
+from app.services.tool_router import TOOL_CONFIDENCE_THRESHOLD, detect_tool_intent
+from app.tools.currency_tool import get_currency_info
+from app.tools.search_tool import get_search_info
+from app.tools.time_tool import get_time_info
+from app.tools.weather_tool import get_weather_info
+
+
+async def generate_chat_response(user_text: str) -> dict[str, Any]:
+    memory_draft = parse_memory_text(user_text)
+    if memory_draft["action"] in {"set", "delete"}:
+        memory_store = get_memory_store()
+        if memory_draft["action"] == "set":
+            assert memory_draft["key"] is not None
+            assert memory_draft["value"] is not None
+            memory_item = memory_store.set_memory(
+                str(memory_draft["key"]),
+                str(memory_draft["value"]),
+                str(memory_draft.get("category") or "preference"),
+            )
+            return {
+                "bot_text": _build_memory_confirmation(memory_item),
+                "emotion": "happy",
+                "action": "memory_updated",
+                "memory": memory_item,
+                "reminder": None,
+                "tool_used": "none",
+                "tool_result": None,
+                "sources": [],
+                "updated_at": memory_item["updated_at"],
+            }
+
+        assert memory_draft["key"] is not None
+        deleted = memory_store.delete_memory(str(memory_draft["key"]))
+        return {
+            "bot_text": _build_memory_delete_confirmation(str(memory_draft["key"]), deleted),
+            "emotion": "happy",
+            "action": "memory_deleted",
+            "memory": None,
+            "reminder": None,
+            "tool_used": "none",
+            "tool_result": None,
+            "sources": [],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    reminder_draft = parse_reminder_text(user_text)
+    if reminder_draft is not None:
+        reminder = get_reminder_store().create(reminder_draft.title, reminder_draft.remind_at)
+        return {
+            "bot_text": _build_reminder_confirmation(reminder),
+            "emotion": "happy",
+            "action": "reminder_created",
+            "reminder": reminder,
+            "tool_used": "none",
+            "tool_result": None,
+            "sources": [],
+            "updated_at": None,
+        }
+
+    memory_context = get_memory_store().get_memory_context()
+    tool_route = detect_tool_intent(user_text)
+    if tool_route.intent != "none" and tool_route.confidence >= TOOL_CONFIDENCE_THRESHOLD:
+        tool_entities = _apply_memory_defaults(tool_route.intent, tool_route.entities, memory_context)
+        tool_result = _run_tool(tool_route.intent, tool_route.query, tool_entities)
+        sources = _build_sources(tool_route.intent, tool_result)
+        updated_at = tool_result.get("updated_at")
+
+        if _tool_is_unavailable(tool_result):
+            return {
+                "bot_text": _build_tool_unavailable_message(tool_route.intent),
+                "emotion": "sad",
+                "action": "tool_response",
+                "reminder": None,
+                "tool_used": tool_route.intent,
+                "tool_result": tool_result,
+                "sources": sources,
+                "updated_at": updated_at,
+            }
+
+        llm_response = await generate_keobot_tool_response(user_text, tool_route.intent, tool_result)
+        return {
+            "bot_text": llm_response["bot_text"],
+            "emotion": llm_response["emotion"],
+            "action": "tool_response",
+            "reminder": None,
+            "tool_used": tool_route.intent,
+            "tool_result": tool_result,
+            "sources": sources,
+            "updated_at": updated_at,
+        }
+
+    llm_response = await generate_keobot_response(user_text, memory_context=memory_context)
+    return {
+        "bot_text": llm_response["bot_text"],
+        "emotion": llm_response["emotion"],
+        "action": None,
+        "reminder": None,
+        "tool_used": "none",
+        "tool_result": None,
+        "sources": [],
+        "updated_at": None,
+    }
+
+
+def _build_reminder_confirmation(reminder: Reminder) -> str:
+    now = datetime.now()
+    same_day = reminder.remind_at.date() == now.date()
+    if same_day:
+        when_text = reminder.remind_at.strftime("%H:%M")
+        return f"Duoc roi, minh se nhac ban {reminder.title} luc {when_text}."
+
+    when_text = reminder.remind_at.strftime("%H:%M ngay %d/%m")
+    return f"Duoc roi, minh se nhac ban {reminder.title} luc {when_text}."
+
+
+def _build_memory_confirmation(memory_item: dict[str, Any]) -> str:
+    key = str(memory_item["key"])
+    value = str(memory_item["value"])
+    if key == "user_name":
+        return f"Da nho roi, minh se goi ban la {value}."
+    if key == "default_city":
+        return f"Da nho roi, thanh pho mac dinh cua ban la {value}."
+    if key == "default_timezone":
+        return f"Da nho roi, mui gio mac dinh cua ban la {value}."
+    if key == "default_currency":
+        return f"Da nho roi, tien te mac dinh cua ban la {value}."
+    if key == "preferred_tts_voice":
+        return f"Da nho roi, minh se uu tien giong {value}."
+    if key == "answer_style":
+        return f"Da nho roi, minh se tra loi theo kieu {value}."
+    if key == "preferred_form_of_address":
+        return f"Da nho roi, minh se xung ho theo kieu {value}."
+    return "Da nho roi."
+
+
+def _build_memory_delete_confirmation(key: str, deleted: bool) -> str:
+    if not deleted:
+        return f"Minh khong tim thay bo nho {key} de xoa."
+    return f"Da xoa bo nho {key}."
+
+
+def _apply_memory_defaults(intent: str, entities: dict[str, Any], memory_context: dict[str, str]) -> dict[str, Any]:
+    merged = dict(entities)
+    if intent == "weather" and not merged.get("location") and memory_context.get("default_city"):
+        merged["location"] = memory_context["default_city"]
+    if intent == "time" and not merged.get("timezone") and memory_context.get("default_timezone"):
+        merged["timezone"] = memory_context["default_timezone"]
+    if intent == "currency" and not merged.get("target_currency") and memory_context.get("default_currency"):
+        merged["target_currency"] = memory_context["default_currency"]
+    return merged
+
+
+def _run_tool(intent: str, query: str, entities: dict[str, Any]) -> dict[str, Any]:
+    if intent == "time":
+        return get_time_info(query, entities=entities)
+    if intent == "currency":
+        return get_currency_info(query, entities=entities)
+    if intent == "weather":
+        return get_weather_info(query, entities=entities)
+    if intent in {"news_search", "general_search"}:
+        return get_search_info(query, intent, entities=entities)
+    return {
+        "is_available": False,
+        "message": "Unsupported tool.",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _build_sources(intent: str, tool_result: dict[str, Any]) -> list[dict[str, Any]]:
+    if intent in {"news_search", "general_search"}:
+        return [
+            {
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "published_at": result.get("published_at"),
+            }
+            for result in tool_result.get("results", [])
+            if result.get("title") and result.get("url")
+        ]
+
+    return []
+
+
+def _tool_is_unavailable(tool_result: dict[str, Any]) -> bool:
+    if tool_result.get("available") is False:
+        return True
+    if tool_result.get("is_available") is False:
+        return True
+    return False
+
+
+def _build_tool_unavailable_message(intent: str) -> str:
+    if intent == "weather":
+        return "Mình chưa được cấu hình công cụ thời tiết."
+    if intent in {"news_search", "general_search"}:
+        return "Mình chưa được cấu hình công cụ tìm kiếm/cập nhật tin tức."
+    return "Mình chưa được cấu hình công cụ cập nhật thông tin này."

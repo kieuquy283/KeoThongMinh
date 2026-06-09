@@ -2,9 +2,55 @@
 
 FastAPI backend for the KeoBot voice pipeline MVP.
 
+## Release v0.3.0
+
+This backend currently ships as part of the desktop release `v0.3.0`.
+
 ## Release Packaging
 
 The release build uses an `onedir` layout for faster and more deterministic packaging than `onefile`.
+
+## Tool Intelligence v0.7.0
+
+The backend now includes a rule-based real-world tool layer:
+
+- `backend/app/services/entity_extractor.py`
+- `backend/app/services/tool_router.py`
+- `backend/app/tools/time_tool.py`
+- `backend/app/tools/currency_tool.py`
+- `backend/app/tools/weather_tool.py`
+- `backend/app/tools/search_tool.py`
+
+The backend also exposes `GET /tools/status` and `POST /tools/test` for provider diagnostics.
+
+Do not fabricate weather, search/news, or live exchange rates when the provider is not configured.
+
+## Lightweight Local Memory v0.9.0
+
+The backend now stores a small local-only memory layer in SQLite:
+
+- `KEOBOT_DATA_DIR/memory.sqlite3`
+- fallback: `backend/data/memory.sqlite3`
+
+Allowed memory keys:
+
+- `user_name`
+- `preferred_form_of_address`
+- `default_city`
+- `default_timezone`
+- `default_currency`
+- `preferred_tts_voice`
+- `answer_style`
+
+Memory endpoints:
+
+- `GET /memory`
+- `POST /memory`
+- `DELETE /memory/{key}`
+- `DELETE /memory`
+
+Memory is separate from Settings. Settings hold provider/API-key configuration; memory holds explicit user preferences only.
+Do not store API keys or hidden/system data in memory.
 
 ## Desktop Settings
 
@@ -15,6 +61,7 @@ Desktop settings are saved locally at `%APPDATA%/KeoBot/config.json`.
 - Mock/local mode can be used for demos without keys.
 - Live providers require OpenAI or Gemini/Google keys from desktop settings or `.env`.
 - If a provider key is missing, update Settings or `.env` and restart the app.
+- Weather/search providers are optional and can be checked with `GET /tools/status`.
 
 ## Setup
 
@@ -68,6 +115,9 @@ backend/dist/keobot_backend/keobot_backend.exe
 ## Notes
 
 - `.env` is not committed.
+- Reminder data is stored locally in SQLite under `KEOBOT_DATA_DIR` or `backend/data/`.
+- Memory data is stored locally in SQLite under `KEOBOT_DATA_DIR` or `backend/data/`.
 - `backend/tmp/` and `backend/app/static/audio/` are runtime directories.
 - TTS writes generated `.mp3` files into `app/static/audio`.
 - Live providers still require API keys via `.env`; keys are never bundled into the app.
+- Currency has a demo fallback when live exchange-rate configuration is missing.

@@ -6,12 +6,13 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { ipcMain } = require("electron");
 
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, Notification } = require("electron");
 
 const DEV_FRONTEND_URL = "http://localhost:5173";
 const BACKEND_URL = "http://127.0.0.1:8000";
 const BACKEND_HEALTH_URL = `${BACKEND_URL}/health`;
 const BACKEND_START_TIMEOUT_MS = Number(process.env.KEOBOT_BACKEND_START_TIMEOUT_MS || "30000");
+const REMINDER_POLL_INTERVAL_MS = Number(process.env.KEOBOT_REMINDER_POLL_INTERVAL_MS || "20000");
 const DEFAULT_SETTINGS = {
   STT_PROVIDER: "mock",
   LLM_PROVIDER: "local",
@@ -19,12 +20,19 @@ const DEFAULT_SETTINGS = {
   OPENAI_API_KEY: "",
   GEMINI_API_KEY: "",
   GOOGLE_API_KEY: "",
+  WEATHER_PROVIDER: "none",
+  OPENWEATHER_API_KEY: "",
+  SEARCH_PROVIDER: "none",
+  TAVILY_API_KEY: "",
+  SERPAPI_API_KEY: "",
   EDGE_TTS_VOICE: "vi-VN-HoaiMyNeural",
 };
 
 let backendProcess = null;
 let mainWindow = null;
 let settingsCache = null;
+let reminderPollTimer = null;
+let reminderPollInFlight = false;
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "config.json");
@@ -42,6 +50,11 @@ function normalizeSettings(rawSettings) {
   settings.OPENAI_API_KEY = typeof settings.OPENAI_API_KEY === "string" ? settings.OPENAI_API_KEY : "";
   settings.GEMINI_API_KEY = typeof settings.GEMINI_API_KEY === "string" ? settings.GEMINI_API_KEY : "";
   settings.GOOGLE_API_KEY = typeof settings.GOOGLE_API_KEY === "string" ? settings.GOOGLE_API_KEY : "";
+  settings.WEATHER_PROVIDER = settings.WEATHER_PROVIDER === "openweathermap" ? "openweathermap" : "none";
+  settings.OPENWEATHER_API_KEY = typeof settings.OPENWEATHER_API_KEY === "string" ? settings.OPENWEATHER_API_KEY : "";
+  settings.SEARCH_PROVIDER = ["tavily", "serpapi"].includes(settings.SEARCH_PROVIDER) ? settings.SEARCH_PROVIDER : "none";
+  settings.TAVILY_API_KEY = typeof settings.TAVILY_API_KEY === "string" ? settings.TAVILY_API_KEY : "";
+  settings.SERPAPI_API_KEY = typeof settings.SERPAPI_API_KEY === "string" ? settings.SERPAPI_API_KEY : "";
   settings.EDGE_TTS_VOICE = typeof settings.EDGE_TTS_VOICE === "string" && settings.EDGE_TTS_VOICE.trim()
     ? settings.EDGE_TTS_VOICE.trim()
     : DEFAULT_SETTINGS.EDGE_TTS_VOICE;
@@ -99,6 +112,11 @@ function buildBackendEnvironment() {
     OPENAI_API_KEY: settings.OPENAI_API_KEY,
     GEMINI_API_KEY: settings.GEMINI_API_KEY,
     GOOGLE_API_KEY: settings.GOOGLE_API_KEY,
+    WEATHER_PROVIDER: settings.WEATHER_PROVIDER,
+    OPENWEATHER_API_KEY: settings.OPENWEATHER_API_KEY,
+    SEARCH_PROVIDER: settings.SEARCH_PROVIDER,
+    TAVILY_API_KEY: settings.TAVILY_API_KEY,
+    SERPAPI_API_KEY: settings.SERPAPI_API_KEY,
     EDGE_TTS_VOICE: settings.EDGE_TTS_VOICE,
   };
 }
@@ -141,6 +159,118 @@ function isBackendHealthy(timeoutMs = 1000) {
       resolve(false);
     });
   });
+}
+
+function requestJson(url, { method = "GET", timeoutMs = 2000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(url, { method }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+      });
+      response.on("end", () => {
+        if ((response.statusCode || 500) < 200 || (response.statusCode || 500) >= 300) {
+          reject(new Error(`HTTP ${response.statusCode || 500}`));
+          return;
+        }
+
+        if (!body) {
+          resolve(null);
+          return;
+        }
+
+        try {
+          resolve(JSON.parse(body));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    request.on("error", reject);
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`Timeout after ${timeoutMs}ms`));
+    });
+    request.end();
+  });
+}
+
+function showReminderNotification(reminder) {
+  const body = `KeoBot nhắc bạn: ${reminder.title}`;
+  if (!Notification.isSupported()) {
+    console.log(`[reminder] ${body}`);
+    return;
+  }
+
+  const notification = new Notification({
+    title: "KeoBot",
+    body,
+  });
+  notification.show();
+}
+
+function emitReminderDue(reminder) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send("keobot:reminderDue", reminder);
+}
+
+async function markReminderTriggered(reminderId) {
+  await requestJson(`${BACKEND_URL}/reminders/${reminderId}/triggered`, {
+    method: "POST",
+    timeoutMs: 3000,
+  });
+}
+
+async function pollDueReminders() {
+  if (reminderPollInFlight) {
+    return;
+  }
+
+  reminderPollInFlight = true;
+  try {
+    if (!(await isBackendHealthy())) {
+      return;
+    }
+
+    const reminders = await requestJson(`${BACKEND_URL}/reminders/due`, {
+      method: "GET",
+      timeoutMs: 3000,
+    });
+
+    if (!Array.isArray(reminders) || reminders.length === 0) {
+      return;
+    }
+
+    for (const reminder of reminders) {
+      showReminderNotification(reminder);
+      emitReminderDue(reminder);
+      await markReminderTriggered(reminder.id);
+    }
+  } catch (error) {
+    console.error("Reminder polling failed:", error);
+  } finally {
+    reminderPollInFlight = false;
+  }
+}
+
+function startReminderPolling() {
+  stopReminderPolling();
+  reminderPollTimer = setInterval(() => {
+    void pollDueReminders();
+  }, REMINDER_POLL_INTERVAL_MS);
+
+  void pollDueReminders();
+}
+
+function stopReminderPolling() {
+  if (reminderPollTimer) {
+    clearInterval(reminderPollTimer);
+    reminderPollTimer = null;
+  }
 }
 
 function stopBackend() {
@@ -230,10 +360,12 @@ async function createWindow() {
 
   if (app.isPackaged) {
     await mainWindow.loadFile(getFrontendProductionPath());
+    startReminderPolling();
     return;
   }
 
   await mainWindow.loadURL(DEV_FRONTEND_URL);
+  startReminderPolling();
 }
 
 async function bootstrap() {
@@ -279,6 +411,7 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+  stopReminderPolling();
   stopBackend();
 });
 

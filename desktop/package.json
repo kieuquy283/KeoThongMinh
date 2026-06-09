@@ -28,8 +28,11 @@
     ],
     "extraResources": [
       {
-        "from": "../backend/dist/keobot_backend",
-        "to": "backend/keobot_backend"
+        "from": "../backend/dist",
+        "to": "backend",
+        "filter": [
+          "keobot_backend/**/*"
+        ]
       }
     ],
     "portable": {

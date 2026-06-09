@@ -7,9 +7,10 @@ import aiofiles
 from fastapi import UploadFile
 
 from app.config import get_settings
-from app.providers.llm import generate_keobot_response
 from app.providers.stt import transcribe_audio
 from app.providers.tts import synthesize_speech
+from app.schemas import ReminderResponse, ToolSource
+from app.services.chat_flow import generate_chat_response
 
 ALLOWED_AUDIO_SUFFIXES = {".webm", ".wav", ".mp3", ".m4a", ".ogg", ".mp4"}
 
@@ -33,33 +34,39 @@ async def _save_upload(audio_file: UploadFile) -> tuple[Path, str]:
                 break
             total_bytes += len(chunk)
             if total_bytes > max_bytes:
-                raise ValueError(f"Audio upload vượt quá giới hạn {settings.max_upload_size_mb}MB.")
+                raise ValueError(f"Audio upload vuot qua gioi han {settings.max_upload_size_mb}MB.")
             await out_file.write(chunk)
 
     return temp_path, suffix
 
 
-async def run_voice_chat(audio_file: UploadFile) -> dict[str, str]:
+async def run_voice_chat(audio_file: UploadFile) -> dict[str, object]:
     settings = get_settings()
     temp_path: Path | None = None
 
     try:
         temp_path, _ = await _save_upload(audio_file)
         user_text = await transcribe_audio(str(temp_path))
-        llm_response = await generate_keobot_response(user_text)
+        chat_response = await generate_chat_response(user_text)
 
         audio_dir = Path(__file__).resolve().parents[1] / "static" / "audio"
         audio_dir.mkdir(parents=True, exist_ok=True)
         generated_name = f"response_{uuid4().hex}.mp3"
         generated_path = audio_dir / generated_name
 
-        await synthesize_speech(llm_response["bot_text"], str(generated_path))
+        await synthesize_speech(chat_response["bot_text"], str(generated_path))
 
         return {
             "user_text": user_text,
-            "bot_text": llm_response["bot_text"],
+            "bot_text": chat_response["bot_text"],
             "audio_url": f"http://localhost:{settings.backend_port}/static/audio/{generated_name}",
-            "emotion": llm_response["emotion"],
+            "emotion": chat_response["emotion"],
+            "action": chat_response["action"],
+            "reminder": ReminderResponse.model_validate(chat_response["reminder"]).model_dump() if chat_response["reminder"] else None,
+            "tool_used": chat_response["tool_used"],
+            "tool_result": chat_response["tool_result"],
+            "sources": [ToolSource.model_validate(source).model_dump() for source in chat_response["sources"]],
+            "updated_at": chat_response["updated_at"],
         }
     finally:
         await audio_file.close()

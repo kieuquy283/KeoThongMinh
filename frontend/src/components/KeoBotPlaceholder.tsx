@@ -1,7 +1,11 @@
+import React, { Suspense } from 'react';
+import KeoBot3D from './KeoBot3D';
+
 interface KeoBotPlaceholderProps {
   status: string;
   statusLabel: string;
   statusMessage: string;
+  audioElement: HTMLAudioElement | null;
 }
 
 const MASCOT_LABELS: Record<string, string> = {
@@ -13,16 +17,14 @@ const MASCOT_LABELS: Record<string, string> = {
   error: "Error",
 };
 
-export function KeoBotPlaceholder({ status, statusLabel, statusMessage }: KeoBotPlaceholderProps) {
+export function KeoBotPlaceholder({ status, statusLabel, statusMessage, audioElement }: KeoBotPlaceholderProps) {
   return (
     <section className="panel keobot-card">
       <div className="panel-inner keobot-panel">
-        <div className="keobot-art">
-          <img
-            className="keobot-image"
-            src="/keobot/keobot_mascot.png"
-            alt="KeoBot mascot"
-          />
+        <div className="keobot-art" style={{ position: 'relative', width: '100%', minHeight: '400px', backgroundColor: '#f8f9fa', borderRadius: '12px', overflow: 'hidden' }}>
+          <Suspense fallback={<div style={{ padding: '20px', textAlign: 'center' }}>Đang tải mô hình 3D...</div>}>
+            <KeoBot3D audioElement={audioElement} />
+          </Suspense>
         </div>
 
         <div className="keobot-copy">

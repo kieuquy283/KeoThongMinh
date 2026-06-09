@@ -1,4 +1,4 @@
-import type { KeoBotSettings } from "./types";
+import type { KeoBotReminder, KeoBotSettings } from "./types";
 
 declare global {
   interface Window {
@@ -7,6 +7,7 @@ declare global {
       isDesktop: boolean;
       getSettings: () => Promise<KeoBotSettings>;
       saveSettings: (settings: KeoBotSettings) => Promise<{ ok: boolean }>;
+      onReminderDue: (callback: (reminder: KeoBotReminder) => void) => () => void;
     };
   }
 }

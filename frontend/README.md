@@ -2,6 +2,37 @@
 
 React + Vite frontend for the KeoBot voice pipeline MVP.
 
+## Real-world Tool Metadata
+
+The conversation panel can now show:
+
+- `tool_used`
+- `updated_at`
+- source links for search/news results
+- a warning banner when a requested tool is unavailable
+
+The Settings panel now also has a `Check tools` button that calls the backend `/tools/status` endpoint and shows whether weather/search providers are configured.
+The app also has a separate Memory panel for local-only preferences.
+
+## Lightweight Local Memory v0.9.0
+
+Memory is separate from Settings.
+
+- Settings stores provider choices and API keys.
+- Memory stores explicit user preferences only.
+- Memory data is stored locally in SQLite through the backend API.
+- The frontend never shows API keys in the Memory panel.
+
+Supported memory keys:
+
+- `user_name`
+- `preferred_form_of_address`
+- `default_city`
+- `default_timezone`
+- `default_currency`
+- `preferred_tts_voice`
+- `answer_style`
+
 ## Setup
 
 ```bash
@@ -13,6 +44,33 @@ npm install
 
 ```bash
 npm run dev
+```
+
+## Voice Modes
+
+### Manual voice mode
+
+- User starts recording manually.
+- User stops recording manually.
+- The recorded turn is uploaded to `/voice-chat`.
+
+### Auto conversation mode
+
+- User enables `Auto conversation`.
+- The frontend keeps listening with the microphone open.
+- Browser-side silence detection ends the turn automatically after speech followed by silence.
+- After audio playback finishes, the frontend re-enters listening mode automatically.
+
+## Silence Detection
+
+The auto conversation hook uses Web Audio API RMS volume analysis with these defaults:
+
+```ts
+{
+  volumeThreshold: 0.02,
+  silenceMs: 1000,
+  minSpeechMs: 500,
+}
 ```
 
 ## Checks
@@ -29,3 +87,15 @@ The frontend defaults to `http://localhost:8000`. Override with:
 ```env
 VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
+
+## Known Limitations
+
+- This is not full streaming realtime conversation.
+- It depends on microphone permission, `MediaRecorder`, and browser Web Audio support.
+- Silence threshold may need tuning for noisy environments.
+- There is no wake word.
+- Cancelling a turn can stop local audio playback and abort the current HTTP request, but it does not interrupt backend streaming because the backend is still request/response.
+- Weather and search answers depend on backend provider configuration.
+- The frontend only displays tool metadata returned by the backend; it does not fetch real-world data directly.
+- The UI does not show API keys, only provider status.
+- Memory is local-only and should not be used for sensitive data.
