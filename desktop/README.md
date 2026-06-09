@@ -23,9 +23,20 @@ The Electron shell now adds the background assistant foundation:
 - tray click or hotkey can bring the app back to the foreground
 - reminders still poll while the window is hidden and show native notifications
 
+Wake Word MVP:
+
+- Wake phrases are handled locally in the frontend when the Web Speech API is available.
+- The app does not stream continuous raw audio to the backend before wake-word activation.
+- If wake word is unsupported, the global hotkey remains the fallback.
+
+Start with Windows:
+
+- Enable the `START_WITH_WINDOWS` toggle in Settings to register KeoBot at login.
+- The setting is stored locally and applied only in packaged mode.
+
 Known limitations:
 
-- this is not a true wake word yet
+- wake word is an MVP, not a dedicated low-power wake-word engine
 - the app must stay running in the background
 - microphone permission is still required
 - the hotkey can conflict with other apps

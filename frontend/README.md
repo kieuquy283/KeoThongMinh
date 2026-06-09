@@ -23,9 +23,16 @@ The frontend now participates in the desktop hands-free foundation:
 - it shows a background/listening banner while hands-free mode is active
 - it still uses browser/Electron microphone permission and `MediaRecorder`
 
+Wake Word MVP:
+
+- It can listen locally for `KeoBot ơi`, `này KeoBot`, and `hey KeoBot` when the Web Speech API is available.
+- Wake-word detection stays local in the renderer until a phrase is recognized.
+- The app only sends audio to `/voice-chat` after wake-word activation or a normal hotkey/listening turn.
+- If wake word is unsupported in the current Electron runtime, the hotkey fallback remains available.
+
 Known limitations:
 
-- this is not a true wake word yet
+- wake word is an MVP, not a dedicated low-power wake-word engine
 - the app must already be running
 - the global hotkey is registered by Electron, not by the web UI
 - hotkey conflicts may happen if another app already owns `Ctrl+Shift+K`

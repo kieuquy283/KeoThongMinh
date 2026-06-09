@@ -144,9 +144,21 @@ KeoBot now supports a background desktop foundation for hands-free use:
 - The tray menu can show the window, start/stop listening, open Settings, or quit fully.
 - Reminders still poll while minimized to tray and show native notifications.
 
+Wake Word MVP:
+
+- Wake phrases: `KeoBot ơi`, `này KeoBot`, `hey KeoBot`
+- Wake word runs locally in the desktop frontend when the environment supports the Web Speech API.
+- Audio is not sent to the backend until wake word activation starts a command turn.
+- If wake word is unsupported, use the hotkey fallback.
+
+Start with Windows:
+
+- KeoBot can optionally register itself to open at login from Settings.
+- The toggle is saved locally in `%APPDATA%/KeoBot/config.json`.
+
 Known limitations:
 
-- This is not a true wake word yet.
+- Wake word is an MVP, not a dedicated low-power wake-word engine.
 - The app must still be running in the background.
 - Microphone permission is still required.
 - The hotkey may conflict with other apps.

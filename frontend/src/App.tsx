@@ -7,6 +7,7 @@ import { ReminderPanel } from "./components/ReminderPanel";
 import { ReminderToast } from "./components/ReminderToast";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { VoiceRecorder, type VoiceRecorderHandle } from "./components/VoiceRecorder";
+import { useWakeWord } from "./hooks/useWakeWord";
 import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
 import type {
   AutoConversationStatus,
@@ -16,6 +17,7 @@ import type {
   KeoBotSettings,
   VoiceChatResponse,
   VoiceStatus,
+  WakeWordStatus,
 } from "./types";
 
 const INITIAL_CONVERSATION: ConversationState = {
@@ -47,6 +49,16 @@ const STATUS_MESSAGES: Record<VoiceStatus, string> = {
   error: "Có lỗi. Hãy kiểm tra lại microphone hoặc backend.",
 };
 
+const WAKE_WORD_LABELS: Record<WakeWordStatus, string> = {
+  off: "Off",
+  starting: "Starting...",
+  listening_for_wake_word: 'Listening for "KeoBot ơi"',
+  wake_word_detected: "Detected",
+  handoff_to_listening: "Handing off...",
+  unsupported: "Unsupported",
+  error: "Error",
+};
+
 function getDesktopMode(): boolean {
   return typeof window !== "undefined" && Boolean(window.keobotDesktop?.isDesktop);
 }
@@ -69,7 +81,13 @@ export default function App() {
   const [dueReminder, setDueReminder] = useState<KeoBotReminder | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const voiceRecorderRef = useRef<VoiceRecorderHandle | null>(null);
+  const wakeWordCommandPendingRef = useRef(false);
   const isDesktopMode = getDesktopMode();
+  const wakeWordEnabled = isDesktopMode && desktopSettings.BACKGROUND_ASSISTANT_ENABLED && desktopSettings.WAKE_WORD_ENABLED;
+  const wakeWord = useWakeWord({
+    enabled: wakeWordEnabled,
+    phrases: desktopSettings.WAKE_WORD_PHRASES,
+  });
 
   const loadReminders = async () => {
     setRemindersLoading(true);
@@ -123,32 +141,137 @@ export default function App() {
   }, [isDesktopMode]);
 
   useEffect(() => {
+    if (!isDesktopMode || !window.keobotDesktop?.onWakeWordDetected) {
+      return;
+    }
+
+    const unsubscribe = window.keobotDesktop.onWakeWordDetected((phrase) => {
+      wakeWordCommandPendingRef.current = true;
+      setHandsfreeMessage(phrase ? `KeoBot đã nghe bạn gọi: ${phrase}` : "KeoBot đã nghe bạn gọi.");
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isDesktopMode]);
+
+  useEffect(() => {
+    if (!isDesktopMode || !window.keobotDesktop?.onWakeWordStatus) {
+      return;
+    }
+
+    const unsubscribe = window.keobotDesktop.onWakeWordStatus((state) => {
+      if (state.status === "unsupported") {
+        setHandsfreeMessage("Wake word is not supported in this environment. Use Ctrl+Shift+K instead.");
+        return;
+      }
+
+      if (state.status === "error") {
+        setHandsfreeMessage("Wake word error.");
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isDesktopMode]);
+
+  useEffect(() => {
     if (!isDesktopMode || !window.keobotDesktop) {
       return;
     }
 
     const unsubscribeStart = window.keobotDesktop.onStartListening(() => {
-      setHandsfreeMessage("Hands-free listening activated. Press Ctrl+Shift+K again or Stop to cancel.");
+      const isWakeWordTurn = wakeWordCommandPendingRef.current;
+
+      if (wakeWord.enabled) {
+        wakeWord.stopWakeWord();
+      }
+
+      if (isWakeWordTurn) {
+        setHandsfreeMessage("KeoBot đã nghe bạn gọi.");
+      } else {
+        setHandsfreeMessage("Hands-free listening activated. Press Ctrl+Shift+K again or Stop to cancel.");
+      }
+
       stopResponseAudio();
-      voiceRecorderRef.current?.startHandsFree();
+      if (isWakeWordTurn) {
+        voiceRecorderRef.current?.startWakeWordTurn();
+      } else {
+        voiceRecorderRef.current?.startHandsFree();
+      }
+
+      wakeWordCommandPendingRef.current = false;
     });
 
     const unsubscribeStop = window.keobotDesktop.onStopListening(() => {
+      wakeWordCommandPendingRef.current = false;
       setHandsfreeMessage(null);
       stopResponseAudio();
       voiceRecorderRef.current?.stopHandsFree();
+      if (wakeWord.enabled && wakeWord.supported) {
+        wakeWord.startWakeWord();
+      }
     });
 
     const unsubscribeOpenSettings = window.keobotDesktop.onOpenSettings(() => {
       setShowSettings(true);
     });
 
+    const unsubscribeSettingsChanged = window.keobotDesktop.onSettingsChanged((nextSettings) => {
+      setDesktopSettings((current) => normalizeSettings({
+        ...current,
+        ...nextSettings,
+      }));
+    });
+
     return () => {
       unsubscribeStart();
       unsubscribeStop();
       unsubscribeOpenSettings();
+      unsubscribeSettingsChanged();
     };
-  }, [isDesktopMode]);
+  }, [isDesktopMode, wakeWord, wakeWord.enabled, wakeWord.supported]);
+
+  useEffect(() => {
+    if (!wakeWord.enabled) {
+      if (handsfreeMessage?.includes("Wake word") || handsfreeMessage?.includes("KeoBot đã nghe bạn gọi")) {
+        setHandsfreeMessage(null);
+      }
+      return;
+    }
+
+    if (wakeWord.status === "wake_word_detected") {
+      wakeWordCommandPendingRef.current = true;
+      setHandsfreeMessage(
+        wakeWord.lastDetectedPhrase ? `KeoBot đã nghe bạn gọi: ${wakeWord.lastDetectedPhrase}` : "KeoBot đã nghe bạn gọi.",
+      );
+      return;
+    }
+
+    if (wakeWord.status === "listening_for_wake_word") {
+      setHandsfreeMessage(
+        `Wake word: đang lắng nghe "${desktopSettings.WAKE_WORD_PHRASES[0] ?? "KeoBot ơi"}".`,
+      );
+      return;
+    }
+
+    if (wakeWord.status === "unsupported") {
+      setHandsfreeMessage("Wake word is not supported in this environment. Use Ctrl+Shift+K instead.");
+      return;
+    }
+
+    if (wakeWord.status === "error") {
+      setHandsfreeMessage(wakeWord.error ?? "Wake word error.");
+    }
+  }, [
+    desktopSettings.WAKE_WORD_PHRASES,
+    handsfreeMessage,
+    wakeWord.enabled,
+    wakeWord.error,
+    wakeWord.lastDetectedPhrase,
+    wakeWord.status,
+  ]);
 
   const playResponseAudio = async (audioUrl?: string) => {
     const url = audioUrl ?? conversation.audioUrl;
@@ -164,6 +287,9 @@ export default function App() {
     audioRef.current = audio;
     audio.onended = () => {
       setStatus("idle");
+      if (wakeWord.enabled && wakeWord.supported) {
+        wakeWord.startWakeWord();
+      }
     };
     audio.onerror = () => {
       setAudioBlocked(true);
@@ -239,7 +365,11 @@ export default function App() {
   const providerSnapshot = desktopSettings ?? DEFAULT_SETTINGS;
 
   let mascotStatus: "idle" | "listening" | "thinking" | "speaking" | "error" = "idle";
-  if (conversationMode === "auto") {
+  if (wakeWord.enabled && wakeWord.status === "error") {
+    mascotStatus = "error";
+  } else if (wakeWord.enabled && (wakeWord.status === "starting" || wakeWord.status === "listening_for_wake_word" || wakeWord.status === "wake_word_detected" || wakeWord.status === "handoff_to_listening")) {
+    mascotStatus = "listening";
+  } else if (conversationMode === "auto") {
     if (autoStatus === "listening" || autoStatus === "speech_detected" || autoStatus === "silence_wait") {
       mascotStatus = "listening";
     } else if (autoStatus === "sending" || autoStatus === "thinking") {
@@ -291,6 +421,10 @@ export default function App() {
           <span>STT: {providerSnapshot.STT_PROVIDER}</span>
           <span>LLM: {providerSnapshot.LLM_PROVIDER}</span>
           <span>TTS: {providerSnapshot.TTS_PROVIDER}</span>
+          <span>Wake word: {wakeWord.enabled ? "On" : "Off"}</span>
+          <span>Wake status: {WAKE_WORD_LABELS[wakeWord.status]}</span>
+          <span>Background: {desktopSettings.BACKGROUND_ASSISTANT_ENABLED ? "On" : "Off"}</span>
+          <span>Hotkey: Ctrl+Shift+K</span>
           <span>Mode: {isDesktopMode ? "Desktop" : "Browser"}</span>
         </div>
       </header>

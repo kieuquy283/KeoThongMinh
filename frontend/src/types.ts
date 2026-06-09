@@ -115,6 +115,11 @@ export interface KeoBotSettings {
   STT_PROVIDER: "mock" | "openai";
   LLM_PROVIDER: "local" | "openai" | "gemini";
   TTS_PROVIDER: "edge_tts";
+  WAKE_WORD_ENABLED: boolean;
+  WAKE_WORD_PHRASES: string[];
+  WAKE_WORD_MODE: "local_stt";
+  START_WITH_WINDOWS: boolean;
+  BACKGROUND_ASSISTANT_ENABLED: boolean;
   OPENAI_API_KEY: string;
   GEMINI_API_KEY: string;
   GOOGLE_API_KEY: string;
@@ -124,4 +129,18 @@ export interface KeoBotSettings {
   TAVILY_API_KEY: string;
   SERPAPI_API_KEY: string;
   EDGE_TTS_VOICE: string;
+}
+
+export type WakeWordStatus =
+  | "off"
+  | "starting"
+  | "listening_for_wake_word"
+  | "wake_word_detected"
+  | "handoff_to_listening"
+  | "unsupported"
+  | "error";
+
+export interface WakeWordState {
+  status: WakeWordStatus;
+  phrase?: string | null;
 }

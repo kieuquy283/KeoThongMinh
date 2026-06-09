@@ -52,8 +52,20 @@ const SECRET_LABELS: Record<SecretField, string> = {
   SERPAPI_API_KEY: "SerpAPI API key",
 };
 
+function formatWakeWordPhrases(phrases: string[]): string {
+  return phrases.join("\n");
+}
+
+function parseWakeWordPhrases(value: string): string[] {
+  return value
+    .split(/[\n,;]/g)
+    .map((phrase) => phrase.trim())
+    .filter(Boolean);
+}
+
 export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
   const [settings, setSettings] = useState<KeoBotSettings>(DEFAULT_SETTINGS);
+  const [wakeWordPhrasesText, setWakeWordPhrasesText] = useState(formatWakeWordPhrases(DEFAULT_SETTINGS.WAKE_WORD_PHRASES));
   const [status, setStatus] = useState<string>("Dang tai cai dat...");
   const [saving, setSaving] = useState(false);
   const [checkingTools, setCheckingTools] = useState(false);
@@ -81,7 +93,9 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
         return;
       }
 
-      setSettings(normalizeSettings(loaded));
+      const normalized = normalizeSettings(loaded);
+      setSettings(normalized);
+      setWakeWordPhrasesText(formatWakeWordPhrases(normalized.WAKE_WORD_PHRASES));
       setStatus("Cai dat da tai xong.");
     });
 
@@ -107,9 +121,13 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
     setStatus("Dang luu cai dat...");
 
     try {
-      await window.keobotDesktop.saveSettings(settings);
+      const nextSettings = {
+        ...settings,
+        WAKE_WORD_PHRASES: parseWakeWordPhrases(wakeWordPhrasesText),
+      };
+      await window.keobotDesktop.saveSettings(nextSettings);
       setStatus("Da luu cai dat. Hay khoi dong lai KeoBot de ap dung thay doi.");
-      onSaved?.(settings);
+      onSaved?.(nextSettings);
     } catch {
       setStatus("Khong the luu cai dat.");
     } finally {
@@ -263,8 +281,54 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
         </div>
 
         <section className="settings-group">
-          <h3>Background</h3>
-          <p className="muted-copy">Start with Windows: planned.</p>
+          <h3>Background Assistant</h3>
+          <div className="settings-fields">
+            <label className="settings-field">
+              <span>Enable wake word</span>
+              <input
+                type="checkbox"
+                checked={settings.WAKE_WORD_ENABLED}
+                onChange={(event) => updateField("WAKE_WORD_ENABLED", event.target.checked)}
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>Wake word mode</span>
+              <input value="local_stt" readOnly />
+            </label>
+
+            <label className="settings-field">
+              <span>Wake phrases</span>
+              <textarea
+                value={wakeWordPhrasesText}
+                onChange={(event) => setWakeWordPhrasesText(event.target.value)}
+                rows={4}
+                placeholder="keobot oi&#10;nay keobot&#10;hey keobot"
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>Start with Windows</span>
+              <input
+                type="checkbox"
+                checked={settings.START_WITH_WINDOWS}
+                onChange={(event) => updateField("START_WITH_WINDOWS", event.target.checked)}
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>Keep KeoBot running in background</span>
+              <input
+                type="checkbox"
+                checked={settings.BACKGROUND_ASSISTANT_ENABLED}
+                onChange={(event) => updateField("BACKGROUND_ASSISTANT_ENABLED", event.target.checked)}
+              />
+            </label>
+          </div>
+          <p className="muted-copy">
+            Wake word keeps the microphone active locally. Audio is only sent to the backend after wake word
+            activation.
+          </p>
         </section>
 
         <section className="settings-group">

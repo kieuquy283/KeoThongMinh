@@ -17,6 +17,11 @@ const DEFAULT_SETTINGS = {
   STT_PROVIDER: "mock",
   LLM_PROVIDER: "local",
   TTS_PROVIDER: "edge_tts",
+  WAKE_WORD_ENABLED: false,
+  WAKE_WORD_PHRASES: ["keobot oi", "nay keobot", "hey keobot"],
+  WAKE_WORD_MODE: "local_stt",
+  START_WITH_WINDOWS: false,
+  BACKGROUND_ASSISTANT_ENABLED: true,
   OPENAI_API_KEY: "",
   GEMINI_API_KEY: "",
   GOOGLE_API_KEY: "",
@@ -42,6 +47,10 @@ function getSettingsPath() {
 }
 
 function normalizeSettings(rawSettings) {
+  const wakeWordPhrases = Array.isArray(rawSettings?.WAKE_WORD_PHRASES)
+    ? rawSettings.WAKE_WORD_PHRASES.filter((phrase) => typeof phrase === "string" && phrase.trim()).map((phrase) => phrase.trim())
+    : DEFAULT_SETTINGS.WAKE_WORD_PHRASES;
+
   const settings = {
     ...DEFAULT_SETTINGS,
     ...(rawSettings && typeof rawSettings === "object" ? rawSettings : {}),
@@ -61,6 +70,11 @@ function normalizeSettings(rawSettings) {
   settings.EDGE_TTS_VOICE = typeof settings.EDGE_TTS_VOICE === "string" && settings.EDGE_TTS_VOICE.trim()
     ? settings.EDGE_TTS_VOICE.trim()
     : DEFAULT_SETTINGS.EDGE_TTS_VOICE;
+  settings.WAKE_WORD_ENABLED = Boolean(settings.WAKE_WORD_ENABLED);
+  settings.WAKE_WORD_PHRASES = wakeWordPhrases.length > 0 ? wakeWordPhrases : DEFAULT_SETTINGS.WAKE_WORD_PHRASES;
+  settings.WAKE_WORD_MODE = settings.WAKE_WORD_MODE === "local_stt" ? "local_stt" : "local_stt";
+  settings.START_WITH_WINDOWS = Boolean(settings.START_WITH_WINDOWS);
+  settings.BACKGROUND_ASSISTANT_ENABLED = settings.BACKGROUND_ASSISTANT_ENABLED !== false;
 
   return settings;
 }
@@ -93,7 +107,51 @@ function saveSettingsToDisk(nextSettings) {
   const normalized = normalizeSettings(nextSettings);
   fs.writeFileSync(settingsPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
   settingsCache = normalized;
+  applyStartupSetting(normalized);
+  broadcastSettingsChange(normalized);
+  refreshTrayMenu();
   return normalized;
+}
+
+function applyStartupSetting(settings = readSettingsFromDisk()) {
+  if (!app.isPackaged) {
+    if (settings.START_WITH_WINDOWS) {
+      console.warn("START_WITH_WINDOWS is enabled in dev mode, but login item changes are skipped.");
+    }
+    return;
+  }
+
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(settings.START_WITH_WINDOWS),
+      path: process.execPath,
+    });
+  } catch (error) {
+    console.warn("Failed to apply start-with-Windows setting:", error);
+  }
+}
+
+function getStartupSetting() {
+  return {
+    enabled: Boolean(readSettingsFromDisk().START_WITH_WINDOWS),
+  };
+}
+
+function shouldKeepRunningInBackground() {
+  return Boolean(readSettingsFromDisk().BACKGROUND_ASSISTANT_ENABLED);
+}
+
+function broadcastSettingsChange(settings) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send("keobot:settingsChanged", {
+    WAKE_WORD_ENABLED: settings.WAKE_WORD_ENABLED,
+    WAKE_WORD_PHRASES: settings.WAKE_WORD_PHRASES,
+    START_WITH_WINDOWS: settings.START_WITH_WINDOWS,
+    BACKGROUND_ASSISTANT_ENABLED: settings.BACKGROUND_ASSISTANT_ENABLED,
+  });
 }
 
 function getBackendDevCommand() {
@@ -185,6 +243,20 @@ async function stopHandsfreeListening() {
 async function openSettingsFromTray() {
   await showMainWindow();
   mainWindow?.webContents.send("handsfree:open-settings");
+}
+
+async function notifyWakeWordDetected(phrase) {
+  await showMainWindow();
+  mainWindow?.webContents.send("wakeword:detected", phrase);
+  mainWindow?.webContents.send("wakeword:status", {
+    status: "wake_word_detected",
+    phrase,
+  });
+  mainWindow?.webContents.send("handsfree:start-listening");
+}
+
+async function notifyWakeWordStatus(status) {
+  mainWindow?.webContents.send("wakeword:status", status);
 }
 
 function logBackendOutput(streamName, data) {
@@ -360,6 +432,18 @@ function createTray() {
       { label: "Start listening", click: () => void startHandsfreeListening() },
       { label: "Stop listening", click: () => void stopHandsfreeListening() },
       { type: "separator" },
+      {
+        label: readSettingsFromDisk().WAKE_WORD_ENABLED ? "Disable wake word" : "Enable wake word",
+        click: () => {
+          const settings = readSettingsFromDisk();
+          saveSettingsToDisk({
+            ...settings,
+            WAKE_WORD_ENABLED: !settings.WAKE_WORD_ENABLED,
+          });
+          refreshTrayMenu();
+        },
+      },
+      { type: "separator" },
       { label: "Open Settings", click: () => void openSettingsFromTray() },
       { type: "separator" },
       {
@@ -373,6 +457,16 @@ function createTray() {
   );
 
   return tray;
+}
+
+function refreshTrayMenu() {
+  if (!tray) {
+    return;
+  }
+
+  tray.destroy();
+  tray = null;
+  createTray();
 }
 
 function registerGlobalHotkeys() {
@@ -467,7 +561,7 @@ async function createWindow() {
   });
 
   mainWindow.on("close", (event) => {
-    if (isQuitting) {
+    if (isQuitting || !shouldKeepRunningInBackground()) {
       return;
     }
 
@@ -476,7 +570,7 @@ async function createWindow() {
   });
 
   mainWindow.on("minimize", (event) => {
-    if (isQuitting) {
+    if (isQuitting || !shouldKeepRunningInBackground()) {
       return;
     }
 
@@ -538,6 +632,14 @@ app.whenReady().then(() => {
     saveSettingsToDisk(nextSettings);
     return { ok: true };
   });
+  ipcMain.handle("keobot:getStartWithWindows", async () => getStartupSetting());
+  ipcMain.handle("keobot:setStartWithWindows", async (_event, enabled) => {
+    const nextSettings = saveSettingsToDisk({
+      ...readSettingsFromDisk(),
+      START_WITH_WINDOWS: Boolean(enabled),
+    });
+    return { ok: Boolean(nextSettings.START_WITH_WINDOWS) };
+  });
   ipcMain.handle("keobot:requestStartListening", async () => {
     await startHandsfreeListening();
     return { ok: true };
@@ -550,7 +652,16 @@ app.whenReady().then(() => {
     await openSettingsFromTray();
     return { ok: true };
   });
+  ipcMain.handle("keobot:wakewordDetected", async (_event, phrase) => {
+    await notifyWakeWordDetected(typeof phrase === "string" ? phrase : "");
+    return { ok: true };
+  });
+  ipcMain.handle("keobot:wakewordStatus", async (_event, payload) => {
+    await notifyWakeWordStatus(payload);
+    return { ok: true };
+  });
 
+  applyStartupSetting();
   createTray();
   registerGlobalHotkeys();
   void bootstrap();
@@ -572,5 +683,7 @@ app.on("before-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-  // Keep running in tray/background assistant mode.
+  if (!shouldKeepRunningInBackground()) {
+    app.quit();
+  }
 });

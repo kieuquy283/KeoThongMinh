@@ -21,6 +21,7 @@ interface VoiceRecorderProps {
 
 export interface VoiceRecorderHandle {
   startHandsFree: () => void;
+  startWakeWordTurn: () => void;
   stopHandsFree: () => void;
   cancelCurrentTurn: () => void;
 }
@@ -242,6 +243,16 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
     }
   };
 
+  const startWakeWordTurn = () => {
+    if (status === "speaking") {
+      onStopSpeaking?.();
+    }
+
+    if (status === "recording" || status === "idle" || status === "error") {
+      void startRecording();
+    }
+  };
+
   const stopHandsFree = () => {
     if (mode === "auto") {
       autoConversation.stop();
@@ -263,10 +274,11 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
     ref,
     () => ({
       startHandsFree,
+      startWakeWordTurn,
       stopHandsFree,
       cancelCurrentTurn: autoConversation.cancelCurrentTurn,
     }),
-    [autoConversation.cancelCurrentTurn, mode, onStopSpeaking, startHandsFree, stopHandsFree, status],
+    [autoConversation.cancelCurrentTurn, mode, onStopSpeaking, startHandsFree, startWakeWordTurn, stopHandsFree, status],
   );
 
   return (

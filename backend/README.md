@@ -59,12 +59,13 @@ The backend does not implement wake word or tray logic, but it still supports th
 - reminders continue to work while the desktop app is minimized to tray
 - the backend stays request/response for voice and text chat
 - the frontend and Electron shell trigger listening through IPC and `/voice-chat`
+- wake-word detection itself stays in the frontend renderer when supported
 
 Known limitations:
 
 - The app must be running for hands-free mode to work
 - Microphone permission is still required on the desktop side
-- There is no full wake-word detector yet
+- Wake word is an MVP and is not a dedicated low-power wake-word engine
 - Hotkey conflicts are handled in Electron, not in the backend
 
 ## Desktop Settings
