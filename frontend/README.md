@@ -14,6 +14,22 @@ The conversation panel can now show:
 The Settings panel now also has a `Check tools` button that calls the backend `/tools/status` endpoint and shows whether weather/search providers are configured.
 The app also has a separate Memory panel for local-only preferences.
 
+## Hands-free Assistant v0.9.0
+
+The frontend now participates in the desktop hands-free foundation:
+
+- it can receive `handsfree:start-listening` and `handsfree:stop-listening` IPC events
+- it can open Settings from an Electron tray action
+- it shows a background/listening banner while hands-free mode is active
+- it still uses browser/Electron microphone permission and `MediaRecorder`
+
+Known limitations:
+
+- this is not a true wake word yet
+- the app must already be running
+- the global hotkey is registered by Electron, not by the web UI
+- hotkey conflicts may happen if another app already owns `Ctrl+Shift+K`
+
 ## Lightweight Local Memory v0.9.0
 
 Memory is separate from Settings.

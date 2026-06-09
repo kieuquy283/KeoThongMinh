@@ -134,6 +134,23 @@ Default frontend silence detection settings:
 
 These values are frontend-side only and can be tuned for different microphones or room noise.
 
+## Hands-free Assistant v0.9.0
+
+KeoBot now supports a background desktop foundation for hands-free use:
+
+- System tray keeps the app running after the window is closed.
+- Global hotkey `Ctrl+Shift+K` starts listening.
+- Global hotkey `Ctrl+Shift+L` stops listening.
+- The tray menu can show the window, start/stop listening, open Settings, or quit fully.
+- Reminders still poll while minimized to tray and show native notifications.
+
+Known limitations:
+
+- This is not a true wake word yet.
+- The app must still be running in the background.
+- Microphone permission is still required.
+- The hotkey may conflict with other apps.
+
 ## Mock / Local Mode
 
 Use this mode for offline development and validation:

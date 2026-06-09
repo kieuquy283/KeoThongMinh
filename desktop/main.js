@@ -6,7 +6,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { ipcMain } = require("electron");
 
-const { app, BrowserWindow, dialog, Notification } = require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, nativeImage } = require("electron");
 
 const DEV_FRONTEND_URL = "http://localhost:5173";
 const BACKEND_URL = "http://127.0.0.1:8000";
@@ -30,6 +30,9 @@ const DEFAULT_SETTINGS = {
 
 let backendProcess = null;
 let mainWindow = null;
+let windowCreationPromise = null;
+let tray = null;
+let isQuitting = false;
 let settingsCache = null;
 let reminderPollTimer = null;
 let reminderPollInFlight = false;
@@ -135,6 +138,55 @@ function getFrontendProductionPath() {
   return path.join(app.getAppPath(), "frontend", "dist", "index.html");
 }
 
+function getTrayIconPath() {
+  const candidates = [
+    path.join(app.getAppPath(), "frontend", "dist", "keobot", "keobot_mascot.png"),
+    path.join(__dirname, "..", "frontend", "dist", "keobot", "keobot_mascot.png"),
+    path.join(__dirname, "..", "frontend", "public", "keobot", "keobot_mascot.png"),
+    path.join(app.getAppPath(), "frontend", "public", "keobot", "keobot_mascot.png"),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function getTrayIcon() {
+  const iconPath = getTrayIconPath();
+  if (iconPath) {
+    return nativeImage.createFromPath(iconPath);
+  }
+
+  return nativeImage.createEmpty();
+}
+
+async function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await createWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+async function startHandsfreeListening() {
+  await showMainWindow();
+  mainWindow?.webContents.send("handsfree:start-listening");
+}
+
+async function stopHandsfreeListening() {
+  await showMainWindow();
+  mainWindow?.webContents.send("handsfree:stop-listening");
+}
+
+async function openSettingsFromTray() {
+  await showMainWindow();
+  mainWindow?.webContents.send("handsfree:open-settings");
+}
+
 function logBackendOutput(streamName, data) {
   const message = data.toString().trim();
   if (message) {
@@ -206,6 +258,9 @@ function showReminderNotification(reminder) {
   const notification = new Notification({
     title: "KeoBot",
     body,
+  });
+  notification.on("click", () => {
+    void showMainWindow();
   });
   notification.show();
 }
@@ -288,6 +343,54 @@ function stopBackend() {
   }
 }
 
+function createTray() {
+  if (tray) {
+    return tray;
+  }
+
+  tray = new Tray(getTrayIcon());
+  tray.setToolTip("KeoBot");
+  tray.on("double-click", () => {
+    void showMainWindow();
+  });
+
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Show KeoBot", click: () => void showMainWindow() },
+      { label: "Start listening", click: () => void startHandsfreeListening() },
+      { label: "Stop listening", click: () => void stopHandsfreeListening() },
+      { type: "separator" },
+      { label: "Open Settings", click: () => void openSettingsFromTray() },
+      { type: "separator" },
+      {
+        label: "Quit",
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]),
+  );
+
+  return tray;
+}
+
+function registerGlobalHotkeys() {
+  const startRegistered = globalShortcut.register("CommandOrControl+Shift+K", () => {
+    void startHandsfreeListening();
+  });
+  if (!startRegistered) {
+    console.warn("Failed to register global hotkey Ctrl+Shift+K.");
+  }
+
+  const stopRegistered = globalShortcut.register("CommandOrControl+Shift+L", () => {
+    void stopHandsfreeListening();
+  });
+  if (!stopRegistered) {
+    console.warn("Failed to register global hotkey Ctrl+Shift+L.");
+  }
+}
+
 function spawnBackend() {
   const isProduction = app.isPackaged;
   const spawnOptions = {
@@ -341,6 +444,15 @@ async function showFatalError(message) {
 }
 
 async function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return mainWindow;
+  }
+
+  if (windowCreationPromise) {
+    return windowCreationPromise;
+  }
+
+  windowCreationPromise = (async () => {
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -354,6 +466,24 @@ async function createWindow() {
     },
   });
 
+  mainWindow.on("close", (event) => {
+    if (isQuitting) {
+      return;
+    }
+
+    event.preventDefault();
+    mainWindow?.hide();
+  });
+
+  mainWindow.on("minimize", (event) => {
+    if (isQuitting) {
+      return;
+    }
+
+    event.preventDefault();
+    mainWindow?.hide();
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -361,11 +491,19 @@ async function createWindow() {
   if (app.isPackaged) {
     await mainWindow.loadFile(getFrontendProductionPath());
     startReminderPolling();
-    return;
+    return mainWindow;
   }
 
   await mainWindow.loadURL(DEV_FRONTEND_URL);
   startReminderPolling();
+  return mainWindow;
+  })();
+
+  try {
+    return await windowCreationPromise;
+  } finally {
+    windowCreationPromise = null;
+  }
 }
 
 async function bootstrap() {
@@ -400,23 +538,39 @@ app.whenReady().then(() => {
     saveSettingsToDisk(nextSettings);
     return { ok: true };
   });
+  ipcMain.handle("keobot:requestStartListening", async () => {
+    await startHandsfreeListening();
+    return { ok: true };
+  });
+  ipcMain.handle("keobot:requestStopListening", async () => {
+    await stopHandsfreeListening();
+    return { ok: true };
+  });
+  ipcMain.handle("keobot:openSettings", async () => {
+    await openSettingsFromTray();
+    return { ok: true };
+  });
 
+  createTray();
+  registerGlobalHotkeys();
   void bootstrap();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow();
-    }
+    void showMainWindow();
   });
 });
 
 app.on("before-quit", () => {
+  isQuitting = true;
+  globalShortcut.unregisterAll();
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
   stopReminderPolling();
   stopBackend();
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  // Keep running in tray/background assistant mode.
 });

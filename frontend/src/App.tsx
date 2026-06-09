@@ -6,7 +6,7 @@ import { MemoryPanel } from "./components/MemoryPanel";
 import { ReminderPanel } from "./components/ReminderPanel";
 import { ReminderToast } from "./components/ReminderToast";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { VoiceRecorder } from "./components/VoiceRecorder";
+import { VoiceRecorder, type VoiceRecorderHandle } from "./components/VoiceRecorder";
 import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
 import type {
   AutoConversationStatus,
@@ -61,12 +61,14 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const [showReminders, setShowReminders] = useState(false);
+  const [handsfreeMessage, setHandsfreeMessage] = useState<string | null>(null);
   const [desktopSettings, setDesktopSettings] = useState<KeoBotSettings>(DEFAULT_SETTINGS);
   const [reminders, setReminders] = useState<KeoBotReminder[]>([]);
   const [remindersLoading, setRemindersLoading] = useState(false);
   const [remindersError, setRemindersError] = useState<string | null>(null);
   const [dueReminder, setDueReminder] = useState<KeoBotReminder | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceRecorderRef = useRef<VoiceRecorderHandle | null>(null);
   const isDesktopMode = getDesktopMode();
 
   const loadReminders = async () => {
@@ -117,6 +119,34 @@ export default function App() {
 
     return () => {
       unsubscribe();
+    };
+  }, [isDesktopMode]);
+
+  useEffect(() => {
+    if (!isDesktopMode || !window.keobotDesktop) {
+      return;
+    }
+
+    const unsubscribeStart = window.keobotDesktop.onStartListening(() => {
+      setHandsfreeMessage("Hands-free listening activated. Press Ctrl+Shift+K again or Stop to cancel.");
+      stopResponseAudio();
+      voiceRecorderRef.current?.startHandsFree();
+    });
+
+    const unsubscribeStop = window.keobotDesktop.onStopListening(() => {
+      setHandsfreeMessage(null);
+      stopResponseAudio();
+      voiceRecorderRef.current?.stopHandsFree();
+    });
+
+    const unsubscribeOpenSettings = window.keobotDesktop.onOpenSettings(() => {
+      setShowSettings(true);
+    });
+
+    return () => {
+      unsubscribeStart();
+      unsubscribeStop();
+      unsubscribeOpenSettings();
     };
   }, [isDesktopMode]);
 
@@ -299,6 +329,18 @@ export default function App() {
 
       {showMemory ? <MemoryPanel onClose={() => setShowMemory(false)} /> : null}
 
+      {handsfreeMessage ? (
+        <section className="panel handsfree-banner" aria-live="polite">
+          <div className="panel-inner">
+            <div className="status-pill recorder-status">
+              <span className="status-dot" />
+              Hands-free
+            </div>
+            <p>{handsfreeMessage}</p>
+          </div>
+        </section>
+      ) : null}
+
       <section className="grid">
         <KeoBotMascot status={mascotStatus} emotion={conversation.emotion} />
         <ChatPanel
@@ -320,6 +362,7 @@ export default function App() {
       <section className="panel recorder-shell">
         <div className="panel-inner recorder-card">
           <VoiceRecorder
+            ref={voiceRecorderRef}
             status={status}
             onStatusChange={setStatus}
             onResponse={handleVoiceResponse}

@@ -811,3 +811,18 @@ img {
     align-items: stretch;
   }
 }
+
+.handsfree-banner {
+  margin-top: 1.25rem;
+}
+
+.handsfree-banner .panel-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.handsfree-banner p {
+  margin: 0;
+  color: var(--text-primary);
+}

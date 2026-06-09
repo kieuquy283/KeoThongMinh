@@ -52,6 +52,21 @@ Memory endpoints:
 Memory is separate from Settings. Settings hold provider/API-key configuration; memory holds explicit user preferences only.
 Do not store API keys or hidden/system data in memory.
 
+## Hands-free Assistant v0.9.0
+
+The backend does not implement wake word or tray logic, but it still supports the background assistant foundation indirectly:
+
+- reminders continue to work while the desktop app is minimized to tray
+- the backend stays request/response for voice and text chat
+- the frontend and Electron shell trigger listening through IPC and `/voice-chat`
+
+Known limitations:
+
+- The app must be running for hands-free mode to work
+- Microphone permission is still required on the desktop side
+- There is no full wake-word detector yet
+- Hotkey conflicts are handled in Electron, not in the backend
+
 ## Desktop Settings
 
 Desktop settings are saved locally at `%APPDATA%/KeoBot/config.json`.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import { sendVoiceChat } from "../api";
 import { useAutoVoiceConversation } from "../hooks/useAutoVoiceConversation";
@@ -17,6 +17,12 @@ interface VoiceRecorderProps {
   onStopSpeaking?: () => void;
   onModeChange?: (mode: ConversationMode) => void;
   onAutoStatusChange?: (status: AutoConversationStatus) => void;
+}
+
+export interface VoiceRecorderHandle {
+  startHandsFree: () => void;
+  stopHandsFree: () => void;
+  cancelCurrentTurn: () => void;
 }
 
 const BUTTON_LABELS: Record<VoiceStatus, string> = {
@@ -59,7 +65,7 @@ function mapAutoStatusToVoiceStatus(status: AutoConversationStatus): VoiceStatus
   }
 }
 
-export function VoiceRecorder({
+export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>(function VoiceRecorder({
   status,
   onStatusChange,
   onResponse,
@@ -67,7 +73,9 @@ export function VoiceRecorder({
   onStopSpeaking,
   onModeChange,
   onAutoStatusChange,
-}: VoiceRecorderProps) {
+}: VoiceRecorderProps,
+  ref,
+) {
   const [mode, setMode] = useState<ConversationMode>("manual");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -210,6 +218,57 @@ export function VoiceRecorder({
     onStatusChange("idle");
   };
 
+  const startHandsFree = () => {
+    if (mode === "auto") {
+      if (!autoConversation.isActive) {
+        void autoConversation.start();
+        return;
+      }
+
+      if (autoConversation.status === "speaking" || autoConversation.status === "sending" || autoConversation.status === "thinking") {
+        autoConversation.cancelCurrentTurn();
+      }
+      return;
+    }
+
+    if (status === "speaking") {
+      onStopSpeaking?.();
+      void startRecording();
+      return;
+    }
+
+    if (status === "idle" || status === "error") {
+      void startRecording();
+    }
+  };
+
+  const stopHandsFree = () => {
+    if (mode === "auto") {
+      autoConversation.stop();
+      return;
+    }
+
+    if (status === "recording") {
+      stopRecording();
+      return;
+    }
+
+    if (status === "speaking") {
+      onStopSpeaking?.();
+      onStatusChange("idle");
+    }
+  };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      startHandsFree,
+      stopHandsFree,
+      cancelCurrentTurn: autoConversation.cancelCurrentTurn,
+    }),
+    [autoConversation.cancelCurrentTurn, mode, onStopSpeaking, startHandsFree, stopHandsFree, status],
+  );
+
   return (
     <div className="recorder-copy">
       <div>
@@ -284,4 +343,4 @@ export function VoiceRecorder({
       )}
     </div>
   );
-}
+});

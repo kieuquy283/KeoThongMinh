@@ -12,6 +12,25 @@ The release build expects the backend to be packaged in `onedir` form at:
 resources/backend/keobot_backend/keobot_backend.exe
 ```
 
+## Hands-free Assistant v0.9.0
+
+The Electron shell now adds the background assistant foundation:
+
+- system tray icon with Show / Start listening / Stop listening / Open Settings / Quit
+- closing or minimizing the window hides it to tray instead of quitting
+- global hotkey `Ctrl+Shift+K` starts listening
+- global hotkey `Ctrl+Shift+L` stops listening
+- tray click or hotkey can bring the app back to the foreground
+- reminders still poll while the window is hidden and show native notifications
+
+Known limitations:
+
+- this is not a true wake word yet
+- the app must stay running in the background
+- microphone permission is still required
+- the hotkey can conflict with other apps
+- the backend remains request/response; there is no full realtime streaming
+
 ## Scripts
 
 ```bash
@@ -103,7 +122,7 @@ Allowed memory keys:
 ## Reminders
 
 - Reminders are stored locally in the backend SQLite database.
-- Notifications appear only while the desktop app is open.
+- Notifications appear while the desktop app is running, even when the window is hidden to tray.
 - Due reminders are polled from the local backend on a timer.
 
 ## Known Limitations

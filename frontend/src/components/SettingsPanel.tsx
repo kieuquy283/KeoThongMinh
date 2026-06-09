@@ -263,6 +263,11 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
         </div>
 
         <section className="settings-group">
+          <h3>Background</h3>
+          <p className="muted-copy">Start with Windows: planned.</p>
+        </section>
+
+        <section className="settings-group">
           <div className="panel-title">
             <div>
               <h3>Provider health</h3>
