@@ -41,7 +41,7 @@ class Settings:
     openai_api_key: str | None = get_env("OPENAI_API_KEY")
     openai_stt_model: str = get_env("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe") or "gpt-4o-mini-transcribe"
     openai_chat_model: str = get_env("OPENAI_CHAT_MODEL", "gpt-4o-mini") or "gpt-4o-mini"
-    gemini_api_key: str | None = get_env("GEMINI_API_KEY")
+    gemini_api_key: str | None = get_env("GEMINI_API_KEY") or get_env("GOOGLE_API_KEY")
     gemini_model: str = get_env("GEMINI_MODEL", "gemini-1.5-flash") or "gemini-1.5-flash"
 
     edge_tts_voice: str = get_env("EDGE_TTS_VOICE", "vi-VN-HoaiMyNeural") or "vi-VN-HoaiMyNeural"

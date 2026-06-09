@@ -4,13 +4,23 @@ interface ChatPanelProps {
   userText: string;
   botText: string;
   emotion: Emotion;
+  statusMessage: string;
   error: string | null;
   audioUrl: string;
   audioBlocked: boolean;
   onPlayAudio: () => void;
 }
 
-export function ChatPanel({ userText, botText, emotion, error, audioUrl, audioBlocked, onPlayAudio }: ChatPanelProps) {
+export function ChatPanel({
+  userText,
+  botText,
+  emotion,
+  statusMessage,
+  error,
+  audioUrl,
+  audioBlocked,
+  onPlayAudio,
+}: ChatPanelProps) {
   const hasConversation = Boolean(userText || botText);
 
   return (
@@ -22,6 +32,11 @@ export function ChatPanel({ userText, botText, emotion, error, audioUrl, audioBl
             <span className="status-dot" />
             Emotion: {emotion}
           </span>
+        </div>
+
+        <div className="status-callout" aria-live="polite">
+          <span className="status-callout-label">Trạng thái</span>
+          <strong>{statusMessage}</strong>
         </div>
 
         <article className="chat-bubble">
@@ -44,7 +59,7 @@ export function ChatPanel({ userText, botText, emotion, error, audioUrl, audioBl
           <div className="audio-actions">
             {audioUrl ? (
               <button className="action-button secondary" type="button" onClick={onPlayAudio}>
-                {audioBlocked ? "Phát audio phản hồi" : "Phát lại audio"}
+                {audioBlocked ? "Phát câu trả lời" : "Phát lại audio"}
               </button>
             ) : null}
           </div>

@@ -4,8 +4,6 @@ import json
 import re
 from typing import Any
 
-from openai import OpenAI
-
 from app.config import get_settings
 from app.schemas import KeoBotLLMResponse
 
@@ -95,6 +93,8 @@ async def generate_keobot_response(user_text: str) -> dict[str, str]:
     if provider == "openai":
         if not settings.openai_api_key:
             raise RuntimeError("Thiếu OPENAI_API_KEY cho LLM provider openai.")
+        from openai import OpenAI
+
         client = OpenAI(api_key=settings.openai_api_key)
         response = client.chat.completions.create(
             model=settings.openai_chat_model,

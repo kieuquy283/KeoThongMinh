@@ -10,10 +10,10 @@ interface VoiceRecorderProps {
 }
 
 const BUTTON_LABELS: Record<VoiceStatus, string> = {
-  idle: "Bắt đầu ghi âm",
-  recording: "Dừng ghi âm",
+  idle: "Bắt đầu nghe",
+  recording: "Dừng nghe",
   uploading: "Đang tải lên...",
-  thinking: "KeoBot đang nghĩ...",
+  thinking: "KeoBot đang suy nghĩ...",
   speaking: "Đang phát...",
   error: "Ghi âm lại",
 };
@@ -31,7 +31,7 @@ export function VoiceRecorder({ status, onStatusChange, onResponse, onError }: V
 
   const startRecording = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      onError("Trình duyệt không hỗ trợ ghi âm.");
+      onError("Trình duyệt không hỗ trợ ghi âm. Hãy dùng bản desktop hoặc một trình duyệt hỗ trợ microphone.");
       onStatusChange("error");
       return;
     }
@@ -78,7 +78,12 @@ export function VoiceRecorder({ status, onStatusChange, onResponse, onError }: V
       recorder.start();
       onStatusChange("recording");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Không lấy được quyền microphone.";
+      const message =
+        error instanceof Error && (error.name === "NotAllowedError" || error.name === "SecurityError")
+          ? "Không lấy được quyền microphone. Hãy cho phép microphone trong Windows hoặc trình duyệt rồi thử lại."
+          : error instanceof Error
+            ? error.message
+            : "Không lấy được quyền microphone. Hãy kiểm tra lại quyền truy cập microphone.";
       onError(message);
       onStatusChange("error");
       stopStream();

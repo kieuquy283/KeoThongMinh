@@ -22,3 +22,13 @@ export interface ConversationState {
   emotion: Emotion;
   audioUrl: string;
 }
+
+export interface KeoBotSettings {
+  STT_PROVIDER: "mock" | "openai";
+  LLM_PROVIDER: "local" | "openai" | "gemini";
+  TTS_PROVIDER: "edge_tts";
+  OPENAI_API_KEY: string;
+  GEMINI_API_KEY: string;
+  GOOGLE_API_KEY: string;
+  EDGE_TTS_VOICE: string;
+}

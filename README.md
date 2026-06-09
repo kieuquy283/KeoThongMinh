@@ -38,7 +38,7 @@ npm install
 npm run dev
 ```
 
-Frontend defaults to `http://localhost:8000`. Override with `VITE_API_BASE_URL` if needed.
+Frontend defaults to `http://127.0.0.1:8000`. Override with `VITE_API_BASE_URL` if needed.
 
 ## Mock / Local Mode
 
@@ -62,9 +62,10 @@ STT_PROVIDER=openai
 LLM_PROVIDER=openai
 TTS_PROVIDER=edge_tts
 OPENAI_API_KEY=...
+GOOGLE_API_KEY=...
 ```
 
-Gemini is available as a fallback LLM option if configured.
+Gemini is available as a fallback LLM option if configured. `GOOGLE_API_KEY` works as an alias for Gemini in the backend.
 
 ## Environment Variables
 
@@ -128,61 +129,95 @@ npm run build
 - 3D VRM integration
 - Lip-sync
 
-## Running as Windows Desktop App
+## Release v0.1.1
+
+The desktop release now uses a backend `onedir` layout for faster, more deterministic packaging.
+
+## Desktop Settings
+
+Settings are stored locally at `%APPDATA%/KeoBot/config.json`.
+
+- API keys are never committed.
+- API keys are never bundled into the app.
+- Mock/local mode can be used for demos without keys.
+- Live providers require OpenAI or Gemini/Google keys in the desktop settings.
+- After changing settings, restart KeoBot to apply them if backend restart is not exposed.
+- If you see a provider key missing error, verify the key in Settings and save again.
 
 ### Dev mode
 
-```bash
+```powershell
 cd backend
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-cd ../frontend
+cd ..\frontend
 npm install
 
-cd ../desktop
+cd ..\desktop
 npm install
 npm run dev
 ```
 
 If you prefer the root wrapper:
 
-```bash
+```powershell
 npm run app:dev
 ```
 
 ### Build frontend
 
-```bash
+```powershell
 cd frontend
 npm run build
 ```
 
 ### Build backend exe
 
-```bash
+```powershell
 cd backend
 python scripts/build_backend_exe.py
 ```
 
+Backend output:
+
+```text
+backend/dist/keobot_backend/keobot_backend.exe
+```
+
+### Smoke test backend exe
+
+```powershell
+cd backend
+python scripts/smoke_backend_exe.py
+```
+
 ### Build desktop app
 
-```bash
+```powershell
 cd desktop
 npm run build
 ```
 
-### Output
+### Smoke packaged app
 
-```text
-release/
+```powershell
+cd desktop
+npm run smoke:packaged
 ```
+
+### Release artifacts to share
+
+- `release/KeoBot-Portable-v0.1.1.exe`
+- `release/KeoBot-Setup-v0.1.1.exe`
 
 ### Notes
 
 - Backend runs locally on `127.0.0.1:8000`.
+- The packaged backend lives at `resources/backend/keobot_backend/keobot_backend.exe`.
 - No web deployment is required.
 - Configure API keys via `.env`.
+- `GOOGLE_API_KEY` is accepted as an alias for Gemini if you prefer that variable name.
 - Do not bundle private API keys into the Electron release.
 - Mock/local mode can be used for demos.

@@ -1,14 +1,18 @@
 {
-  "name": "keobot",
+  "name": "keobot-desktop",
   "productName": "KeoBot",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
+  "description": "Vietnamese speech-to-speech AI assistant desktop app.",
+  "author": "Kieu Thien Quy",
+  "license": "MIT",
   "main": "main.js",
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
     "build": "electron-builder",
-    "pack": "electron-builder --dir"
+    "pack": "electron-builder --dir",
+    "smoke:packaged": "node scripts/smoke_packaged_app.js"
   },
   "build": {
     "appId": "com.keobot.desktop",
@@ -24,21 +28,25 @@
     ],
     "extraResources": [
       {
-        "from": "../backend/dist/keobot_backend.exe",
-        "to": "backend/keobot_backend.exe"
+        "from": "../backend/dist/keobot_backend",
+        "to": "backend/keobot_backend"
       }
     ],
+    "portable": {
+      "artifactName": "KeoBot-Portable-v${version}.${ext}"
+    },
+    "nsis": {
+      "artifactName": "KeoBot-Setup-v${version}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
     "win": {
       "target": [
         "portable",
         "nsis"
       ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
     }
   },
   "devDependencies": {

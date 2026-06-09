@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import edge_tts
-
 from app.config import get_settings
 
 
@@ -19,6 +17,8 @@ async def synthesize_speech(text: str, output_path: str) -> str:
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    import edge_tts
+
     communicator = edge_tts.Communicate(
         text=content,
         voice=settings.edge_tts_voice,

@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from openai import OpenAI
-
 from app.config import get_settings
 
 
@@ -12,6 +10,8 @@ async def _transcribe_with_openai(file_path: str) -> str:
     settings = get_settings()
     if not settings.openai_api_key:
         raise RuntimeError("Thiếu OPENAI_API_KEY cho STT provider openai.")
+
+    from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
     path = Path(file_path)
