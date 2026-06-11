@@ -20,8 +20,9 @@ class Reminder:
 
 
 def get_default_db_path() -> Path:
-    settings = get_settings()
-    return settings.data_dir / "reminders.sqlite3"
+    from app.data_paths import get_reminder_db_path, migrate_old_db
+    migrate_old_db("reminders.sqlite3")
+    return get_reminder_db_path()
 
 
 @lru_cache(maxsize=1)
@@ -127,6 +128,13 @@ class ReminderStore:
         if row is None:
             raise KeyError(f"Reminder not found: {reminder_id}")
         return self._row_to_reminder(row)
+
+    def clear_reminders(self) -> int:
+        with self._connect() as connection:
+            count_row = connection.execute("SELECT COUNT(*) AS count FROM reminders").fetchone()
+            count = int(count_row["count"]) if count_row is not None else 0
+            connection.execute("DELETE FROM reminders")
+        return count
 
     def _row_to_reminder(self, row: sqlite3.Row) -> Reminder:
         return Reminder(

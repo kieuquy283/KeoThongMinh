@@ -10,6 +10,7 @@ async def _fake_synthesize_speech(text: str, output_path: str) -> str:
 
 
 def test_voice_chat_mock_mode(client, app_module, monkeypatch):
+    from app.data_paths import get_static_dir
     from app.services import voice_chat as voice_service
 
     monkeypatch.setattr(voice_service, "synthesize_speech", _fake_synthesize_speech)
@@ -29,6 +30,6 @@ def test_voice_chat_mock_mode(client, app_module, monkeypatch):
     assert payload["audio_url"].endswith(".mp3")
 
     generated_name = Path(payload["audio_url"]).name
-    generated_path = Path(__file__).resolve().parents[1] / "app" / "static" / "audio" / generated_name
+    generated_path = get_static_dir() / "audio" / generated_name
     assert generated_path.exists()
     generated_path.unlink()

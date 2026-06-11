@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS: KeoBotSettings = {
   TAVILY_API_KEY: "",
   SERPAPI_API_KEY: "",
   EDGE_TTS_VOICE: "vi-VN-HoaiMyNeural",
+  PRIVACY_NOTICE_SEEN: false,
 };
 
 export function normalizeSettings(settings: Partial<KeoBotSettings> | null | undefined): KeoBotSettings {

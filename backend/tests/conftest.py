@@ -21,13 +21,17 @@ def app_module(monkeypatch, tmp_path):
     config_module.get_settings.cache_clear()
 
     for module_name in (
+        "app.data_paths",
         "app.providers.stt",
         "app.providers.llm",
         "app.providers.tts",
-        "app.services.chat_flow",
-        "app.services.memory_parser",
-        "app.services.memory_store",
+        "app.services.reminder_parser",
         "app.services.reminder_store",
+        "app.services.memory_store",
+        "app.services.memory_parser",
+        "app.services.entity_extractor",
+        "app.services.tool_router",
+        "app.services.chat_flow",
         "app.services.voice_chat",
         "app.main",
     ):

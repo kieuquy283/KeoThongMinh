@@ -3,6 +3,7 @@ import { deleteReminder, fetchReminders } from "./api";
 import { ChatPanel } from "./components/ChatPanel";
 import { KeoBotMascot } from "./components/KeoBotMascot";
 import { MemoryPanel } from "./components/MemoryPanel";
+import { PrivacyNotice } from "./components/PrivacyNotice";
 import { ReminderPanel } from "./components/ReminderPanel";
 import { ReminderToast } from "./components/ReminderToast";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -76,6 +77,7 @@ export default function App() {
   const [showReminders, setShowReminders] = useState(false);
   const [handsfreeMessage, setHandsfreeMessage] = useState<string | null>(null);
   const [desktopSettings, setDesktopSettings] = useState<KeoBotSettings>(DEFAULT_SETTINGS);
+  const [privacyNotified, setPrivacyNotified] = useState(false);
   const [reminders, setReminders] = useState<KeoBotReminder[]>([]);
   const [remindersLoading, setRemindersLoading] = useState(false);
   const [remindersError, setRemindersError] = useState<string | null>(null);
@@ -120,13 +122,32 @@ export default function App() {
         return;
       }
 
-      setDesktopSettings(normalizeSettings(loaded));
+      const normalized = normalizeSettings(loaded);
+      setDesktopSettings(normalized);
+      setPrivacyNotified(normalized.PRIVACY_NOTICE_SEEN);
     });
 
     return () => {
       active = false;
     };
   }, [isDesktopMode]);
+
+  const handlePrivacyAction = async (action: "enable_memory" | "keep_memory_off") => {
+    if (!window.keobotDesktop) return;
+    try {
+      const updated = { ...desktopSettings, PRIVACY_NOTICE_SEEN: true };
+      await window.keobotDesktop.saveSettings(updated);
+      setDesktopSettings(normalizeSettings(updated));
+      setPrivacyNotified(true);
+    } catch {
+      // Silently fail — user can still dismiss
+    }
+  };
+
+  const handleOpenPrivacySettings = () => {
+    setPrivacyNotified(true);
+    setShowSettings(true);
+  };
 
   useEffect(() => {
     if (!isDesktopMode || !window.keobotDesktop?.onReminderDue) {
@@ -515,6 +536,14 @@ export default function App() {
       ) : null}
 
       {showMemory ? <MemoryPanel onClose={() => setShowMemory(false)} /> : null}
+
+      {isDesktopMode && !privacyNotified ? (
+        <PrivacyNotice
+          onEnableMemory={() => void handlePrivacyAction("enable_memory")}
+          onKeepMemoryOff={() => void handlePrivacyAction("keep_memory_off")}
+          onOpenPrivacySettings={handleOpenPrivacySettings}
+        />
+      ) : null}
 
       {handsfreeMessage ? (
         <section className="panel handsfree-banner" aria-live="polite">

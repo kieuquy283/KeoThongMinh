@@ -285,8 +285,12 @@ function getBackendDevCommand() {
 
 function buildBackendEnvironment() {
   const settings = readSettingsFromDisk();
+  ensureElectronDataPaths();
+  const userDataPath = app.getPath("userData");
   return {
     ...process.env,
+    KEOBOT_DATA_DIR: userDataPath,
+    KEOBOT_LOG_DIR: path.join(userDataPath, "logs"),
     PYTHONUNBUFFERED: "1",
     STT_PROVIDER: settings.STT_PROVIDER,
     LLM_PROVIDER: settings.LLM_PROVIDER,
@@ -941,6 +945,68 @@ app.whenReady().then(() => {
   ipcMain.handle("keobot:openLogsFolder", async () => {
     openLogsFolder();
     return { ok: true };
+  });
+
+  // Memory export / import / personal data reset
+  ipcMain.handle("keobot:exportMemory", async () => {
+    try {
+      const data = await requestJson(`${BACKEND_URL}/memory/export`);
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: "Export Memory",
+        defaultPath: `keobot-memory-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: "JSON files", extensions: ["json"] }],
+      });
+      if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+      await fs.promises.writeFile(result.filePath, JSON.stringify(data, null, 2), "utf-8");
+      return { ok: true, filePath: result.filePath };
+    } catch (err) {
+      mainLogger.error(`Export memory failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("keobot:importMemory", async () => {
+    try {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: "Import Memory",
+        filters: [{ name: "JSON files", extensions: ["json"] }],
+        properties: ["openFile"],
+      });
+      if (result.canceled || result.filePaths.length === 0) return { ok: false, canceled: true };
+      const content = await fs.promises.readFile(result.filePaths[0], "utf-8");
+      const payload = JSON.parse(content);
+      const mode = "merge";
+      const resp = await requestJson(`${BACKEND_URL}/memory/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records: payload.records || payload, mode }),
+      });
+      return { ok: true, ...resp };
+    } catch (err) {
+      mainLogger.error(`Import memory failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("keobot:resetPersonalData", async () => {
+    const buttonIndex = dialog.showMessageBoxSync(mainWindow, {
+      type: "warning",
+      title: "Reset Personal Data",
+      message: "Are you sure you want to reset all personal data?\n\nThis will delete all memories, reminders, documents, indexes, and temporary files. This action cannot be undone.",
+      buttons: ["Cancel", "Reset Everything"],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (buttonIndex !== 1) return { ok: false, canceled: true };
+    try {
+      const resp = await fetch(`${BACKEND_URL}/personal-data/reset`, { method: "POST" });
+      const data = await resp.json();
+      mainLogger.info(`Personal data reset: ${JSON.stringify(data)}`);
+      return { ok: true, ...data };
+    } catch (err) {
+      mainLogger.error(`Reset personal data failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
   });
 
   // Update-related IPC

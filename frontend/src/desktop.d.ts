@@ -47,6 +47,28 @@ declare global {
       getBackendHealth: () => Promise<{ healthy: boolean; version: string | null }>;
       logDiagnostic: (payload: { category: string; message: string; meta?: Record<string, unknown> }) => Promise<void>;
       openLogsFolder: () => Promise<{ ok: boolean }>;
+      // Memory export / import / reset
+      exportMemory: () => Promise<{ ok: boolean; canceled?: boolean; filePath?: string; error?: string }>;
+      importMemory: () => Promise<{
+        ok: boolean;
+        canceled?: boolean;
+        records_found?: number;
+        records_added?: number;
+        records_updated?: number;
+        records_invalid?: number;
+        errors?: string[];
+        error?: string;
+      }>;
+      resetPersonalData: () => Promise<{
+        ok: boolean;
+        canceled?: boolean;
+        memory_deleted?: number;
+        reminders_deleted?: number;
+        temp_files_deleted?: number;
+        documents_deleted?: number;
+        indexes_deleted?: number;
+        error?: string;
+      }>;
       // Update events
       onUpdateStatus: (callback: (status: {
         status: "idle" | "checking" | "update_available" | "update_not_available" | "downloading" | "downloaded" | "error";

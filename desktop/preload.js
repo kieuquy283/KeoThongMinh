@@ -76,6 +76,9 @@ contextBridge.exposeInMainWorld("keobotDesktop", {
   },
 
   // Diagnostics & metadata
+  exportMemory: () => ipcRenderer.invoke("keobot:exportMemory"),
+  importMemory: () => ipcRenderer.invoke("keobot:importMemory"),
+  resetPersonalData: () => ipcRenderer.invoke("keobot:resetPersonalData"),
   getAppInfo: () => ipcRenderer.invoke("keobot:getAppInfo"),
   getBackendHealth: () => ipcRenderer.invoke("keobot:getBackendHealth"),
   logDiagnostic: (payload) => ipcRenderer.invoke("keobot:logDiagnostic", payload),

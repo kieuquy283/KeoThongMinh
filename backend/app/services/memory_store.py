@@ -7,17 +7,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from app.config import get_settings
-
 logger = logging.getLogger("keobot.memory")
 
-MEMORY_DB_FILENAME = "memory.sqlite3"
 SCHEMA_VERSION = 2
 
 
 def get_default_db_path() -> Path:
-    settings = get_settings()
-    return settings.data_dir / MEMORY_DB_FILENAME
+    from app.data_paths import get_memory_db_path, migrate_old_db
+    migrate_old_db("memory.sqlite3")
+    return get_memory_db_path()
 
 
 @lru_cache(maxsize=1)
@@ -195,6 +193,65 @@ class MemoryStore:
             if item["key"] in SAFE_CONTEXT_KEYS and item["value"] and item["is_enabled"]:
                 context[item["key"]] = item["value"]
         return context
+
+    def import_memories(self, records: list[dict], mode: str = "merge") -> dict:
+        errors: list[str] = []
+        records_found = len(records)
+        records_added = 0
+        records_updated = 0
+        records_invalid = 0
+
+        if mode == "replace":
+            self.clear_memory()
+
+        normalized_keys: set[str] = set()
+        for record in records:
+            try:
+                key = _normalize_key(record.get("key", ""))
+                if key in normalized_keys:
+                    records_invalid += 1
+                    errors.append(f"Duplicate key: {key}")
+                    continue
+                normalized_keys.add(key)
+                value = _normalize_value(record.get("value", ""))
+                category = record.get("category", "preference") or "preference"
+                source = str(record.get("source", "import")) or "import"
+                confidence = float(record.get("confidence", 1.0))
+                is_enabled = bool(record.get("is_enabled", True))
+                current_time = datetime.now(timezone.utc).isoformat()
+
+                existing = self.get_memory(key)
+                with self._connect() as connection:
+                    if existing is None:
+                        connection.execute(
+                            """
+                            INSERT INTO memory_items (key, value, category, source, confidence, is_enabled, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (key, value, category, source, confidence, int(is_enabled), current_time, current_time),
+                        )
+                        records_added += 1
+                    else:
+                        connection.execute(
+                            """
+                            UPDATE memory_items
+                            SET value = ?, category = ?, source = ?, confidence = ?, is_enabled = ?, updated_at = ?
+                            WHERE key = ?
+                            """,
+                            (value, category, source, confidence, int(is_enabled), current_time, key),
+                        )
+                        records_updated += 1
+            except (ValueError, TypeError) as e:
+                records_invalid += 1
+                errors.append(f"Invalid record: {e}")
+
+        return {
+            "records_found": records_found,
+            "records_added": records_added,
+            "records_updated": records_updated,
+            "records_invalid": records_invalid,
+            "errors": errors,
+        }
 
     def _row_to_item(self, row: sqlite3.Row) -> dict[str, Any]:
         return {

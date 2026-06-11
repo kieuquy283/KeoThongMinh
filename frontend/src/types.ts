@@ -166,6 +166,7 @@ export interface KeoBotSettings {
   TAVILY_API_KEY: string;
   SERPAPI_API_KEY: string;
   EDGE_TTS_VOICE: string;
+  PRIVACY_NOTICE_SEEN: boolean;
 }
 
 export type WakeWordStatus =

@@ -589,6 +589,95 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
           </div>
         </section>
 
+        <section className="settings-group">
+          <h3>Privacy & Data</h3>
+          <div className="tool-warning">
+            <strong>Local only</strong>
+            <span>All memory and personal data is stored locally on this device. Nothing is sent to the cloud. You can export, import, or reset your data at any time.</span>
+          </div>
+          <div className="settings-fields">
+            <div className="settings-field">
+              <span>Export memory</span>
+              <button
+                className="action-button secondary"
+                type="button"
+                onClick={async () => {
+                  if (!window.keobotDesktop?.exportMemory) return;
+                  setStatus("Dang xuat bo nho...");
+                  try {
+                    const result = await window.keobotDesktop.exportMemory();
+                    if (result.ok) {
+                      setStatus(result.filePath ? `Da xuat bo nho den: ${result.filePath}` : "Da xuat bo nho.");
+                    } else if (result.canceled) {
+                      setStatus("Da huy xuat bo nho.");
+                    } else {
+                      setStatus(`Loi xuat bo nho: ${result.error || "unknown"}`);
+                    }
+                  } catch {
+                    setStatus("Khong the xuat bo nho.");
+                  }
+                }}
+              >
+                Export memory
+              </button>
+            </div>
+            <div className="settings-field">
+              <span>Import memory</span>
+              <button
+                className="action-button secondary"
+                type="button"
+                onClick={async () => {
+                  if (!window.keobotDesktop?.importMemory) return;
+                  setStatus("Dang nhap bo nho...");
+                  try {
+                    const result = await window.keobotDesktop.importMemory();
+                    if (result.ok) {
+                      setStatus(`Da nhap bo nho: ${result.records_added} them, ${result.records_updated} cap nhat.`);
+                    } else if (result.canceled) {
+                      setStatus("Da huy nhap bo nho.");
+                    } else {
+                      setStatus(`Loi nhap bo nho: ${result.error || "unknown"}`);
+                    }
+                  } catch {
+                    setStatus("Khong the nhap bo nho.");
+                  }
+                }}
+              >
+                Import memory
+              </button>
+            </div>
+            <div className="settings-field">
+              <span>Reset personal data</span>
+              <button
+                className="action-button secondary danger"
+                type="button"
+                onClick={async () => {
+                  if (!window.keobotDesktop?.resetPersonalData) return;
+                  setStatus("Dang xac nhan...");
+                  try {
+                    const result = await window.keobotDesktop.resetPersonalData();
+                    if (result.ok) {
+                      setStatus(`Da reset du lieu ca nhan: ${result.memory_deleted} memory, ${result.reminders_deleted} reminders, ${result.temp_files_deleted} temp, ${result.documents_deleted} documents.`);
+                    } else if (result.canceled) {
+                      setStatus("Da huy reset.");
+                    } else {
+                      setStatus(`Loi reset: ${result.error || "unknown"}`);
+                    }
+                  } catch {
+                    setStatus("Khong the reset du lieu ca nhan.");
+                  }
+                }}
+              >
+                Reset personal data
+              </button>
+            </div>
+          </div>
+          <p className="muted-copy">
+            Export saves all memory to a JSON file. Import merges memory from a previously exported JSON file.
+            Reset deletes all memories, reminders, documents, indexes, and temporary files. These actions cannot be undone.
+          </p>
+        </section>
+
         <div className="settings-grid">
           <section className="settings-group">
             <h3>Core Providers</h3>

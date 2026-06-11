@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Emotion = Literal["neutral", "happy", "thinking", "sad", "surprised", "angry", "wink"]
 ReminderStatus = Literal["pending", "triggered"]
@@ -115,6 +115,70 @@ class MemoryClearResponse(BaseModel):
 
 class MemoryContextResponse(BaseModel):
     context: dict[str, str]
+
+
+class MemoryExportRecord(BaseModel):
+    key: str
+    value: str
+    category: str
+    source: str
+    confidence: float
+    is_enabled: bool
+    created_at: str
+    updated_at: str
+    last_used_at: str | None = None
+
+
+class MemoryExportResponse(BaseModel):
+    schema_version: int = 1
+    exported_at: str
+    app_version: str = ""
+    records: list[MemoryExportRecord]
+
+
+_SECRET_KEY_PATTERNS = {
+    "api_key", "apikey", "secret", "password", "token", "auth",
+}
+
+
+class MemoryImportRecord(BaseModel):
+    key: str = Field(min_length=1, max_length=200)
+    value: str = Field(min_length=1, max_length=200)
+    category: str = Field(default="preference", max_length=100)
+    source: str = Field(default="import", max_length=100)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    is_enabled: bool = True
+
+    @field_validator("key")
+    @classmethod
+    def check_not_secret(cls, value: str) -> str:
+        lower = value.lower().replace("-", "_")
+        if any(pattern in lower for pattern in _SECRET_KEY_PATTERNS):
+            raise ValueError(f"Key '{value}' looks like a secret and cannot be imported as memory.")
+        return value
+
+
+class MemoryImportRequest(BaseModel):
+    records: list[MemoryImportRecord]
+    mode: Literal["merge", "replace"] = "merge"
+
+
+class MemoryImportResponse(BaseModel):
+    ok: bool = True
+    records_found: int = 0
+    records_added: int = 0
+    records_updated: int = 0
+    records_invalid: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class ResetPersonalDataResponse(BaseModel):
+    ok: bool = True
+    memory_deleted: int = 0
+    reminders_deleted: int = 0
+    temp_files_deleted: int = 0
+    documents_deleted: int = 0
+    indexes_deleted: int = 0
 
 
 class ToolProviderStatus(BaseModel):

@@ -6,6 +6,7 @@ from uuid import uuid4
 import aiofiles
 from fastapi import UploadFile
 
+from app.data_paths import get_temp_dir
 from app.config import get_settings
 from app.providers.stt import transcribe_audio
 from app.providers.tts import synthesize_speech
@@ -17,7 +18,7 @@ ALLOWED_AUDIO_SUFFIXES = {".webm", ".wav", ".mp3", ".m4a", ".ogg", ".mp4"}
 
 async def _save_upload(audio_file: UploadFile) -> tuple[Path, str]:
     settings = get_settings()
-    upload_dir = Path(__file__).resolve().parents[2] / "tmp" / "voice_uploads"
+    upload_dir = get_temp_dir() / "voice_uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     original_suffix = Path(audio_file.filename or "").suffix.lower()
@@ -49,7 +50,8 @@ async def run_voice_chat(audio_file: UploadFile) -> dict[str, object]:
         user_text = await transcribe_audio(str(temp_path))
         chat_response = await generate_chat_response(user_text)
 
-        audio_dir = Path(__file__).resolve().parents[1] / "static" / "audio"
+        from app.data_paths import get_audio_dir
+        audio_dir = get_audio_dir()
         audio_dir.mkdir(parents=True, exist_ok=True)
         generated_name = f"response_{uuid4().hex}.mp3"
         generated_path = audio_dir / generated_name

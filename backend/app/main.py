@@ -8,17 +8,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
+from app import data_paths
+from app.data_paths import ensure_data_dirs, get_static_dir
 from app.schemas import (
     HealthResponse,
     MemoryClearResponse,
     MemoryContextResponse,
     MemoryDeleteResponse,
+    MemoryExportResponse,
+    MemoryExportRecord,
+    MemoryImportRequest,
+    MemoryImportResponse,
     MemoryItemResponse,
     MemoryUpdateRequest,
     MemoryUpsertRequest,
     ReminderCreateRequest,
     ReminderDeleteResponse,
     ReminderResponse,
+    ResetPersonalDataResponse,
     TextChatRequest,
     TextChatResponse,
     ToolTestRequest,
@@ -57,8 +64,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-static_dir = Path(__file__).resolve().parent / "static"
-static_dir.mkdir(parents=True, exist_ok=True)
+ensure_data_dirs()
+static_dir = get_static_dir()
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
@@ -155,10 +162,98 @@ async def memory_context() -> MemoryContextResponse:
     return MemoryContextResponse(context=context)
 
 
+@app.get("/memory/export", response_model=MemoryExportResponse)
+async def export_memory() -> MemoryExportResponse:
+    store = get_memory_store()
+    items = store.list_memory()
+    def _parse_dt(raw: str | None) -> str:
+        if not raw:
+            return ""
+        try:
+            return datetime.fromisoformat(raw).isoformat()
+        except (ValueError, TypeError):
+            return raw
+    records = [
+        MemoryExportRecord(
+            key=item["key"],
+            value=item["value"],
+            category=item["category"],
+            source=item["source"],
+            confidence=item["confidence"],
+            is_enabled=item["is_enabled"],
+            created_at=_parse_dt(item.get("created_at")),
+            updated_at=_parse_dt(item.get("updated_at")),
+            last_used_at=_parse_dt(item.get("last_used_at")) or None,
+        )
+        for item in items
+    ]
+    return MemoryExportResponse(
+        exported_at=datetime.now(timezone.utc).isoformat(),
+        records=records,
+    )
+
+
+@app.post("/memory/import", response_model=MemoryImportResponse)
+async def import_memory(payload: MemoryImportRequest) -> MemoryImportResponse:
+    store = get_memory_store()
+    result = store.import_memories(
+        records=[r.model_dump() for r in payload.records],
+        mode=payload.mode,
+    )
+    return MemoryImportResponse(
+        records_found=result["records_found"],
+        records_added=result["records_added"],
+        records_updated=result["records_updated"],
+        records_invalid=result["records_invalid"],
+        errors=result.get("errors", []),
+    )
+
+
 @app.delete("/memory", response_model=MemoryClearResponse)
 async def clear_memory() -> MemoryClearResponse:
     deleted = get_memory_store().clear_memory()
     return MemoryClearResponse(deleted=deleted)
+
+
+@app.post("/personal-data/reset", response_model=ResetPersonalDataResponse)
+async def reset_personal_data() -> ResetPersonalDataResponse:
+    import shutil
+    memory_deleted = get_memory_store().clear_memory()
+    reminders = get_reminder_store().clear_reminders()
+    temp_deleted = 0
+    docs_deleted = 0
+    idx_deleted = 0
+    temp_dir = data_paths.get_temp_dir()
+    if temp_dir.exists():
+        for child in temp_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+            temp_deleted += 1
+    docs_dir = data_paths.get_documents_dir()
+    if docs_dir.exists():
+        for child in docs_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+            docs_deleted += 1
+    idx_dir = data_paths.get_indexes_dir()
+    if idx_dir.exists():
+        for child in idx_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+            idx_deleted += 1
+    return ResetPersonalDataResponse(
+        memory_deleted=memory_deleted,
+        reminders_deleted=reminders,
+        temp_files_deleted=temp_deleted,
+        documents_deleted=docs_deleted,
+        indexes_deleted=idx_deleted,
+    )
 
 
 @app.post("/reminders/{reminder_id}/triggered", response_model=ReminderResponse)

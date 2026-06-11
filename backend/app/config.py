@@ -6,6 +6,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.data_paths import get_data_root
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 ENV_PATH = BASE_DIR / ".env"
 
@@ -27,24 +29,13 @@ def require_env(name: str) -> str:
     return value
 
 
-def _get_data_dir() -> Path:
-    raw_path = get_env("KEOBOT_DATA_DIR")
-    if not raw_path:
-        return BASE_DIR / "data"
-
-    data_dir = Path(raw_path).expanduser()
-    if data_dir.is_absolute():
-        return data_dir
-    return BASE_DIR / data_dir
-
-
 class Settings:
     app_name: str = get_env("APP_NAME", "Kẹo Thông Minh Voice Pipeline") or "Kẹo Thông Minh Voice Pipeline"
     app_env: str = get_env("APP_ENV", "development") or "development"
     backend_host: str = get_env("BACKEND_HOST", "127.0.0.1") or "127.0.0.1"
     backend_port: int = int(get_env("BACKEND_PORT", "8000") or "8000")
     frontend_origin: str = get_env("FRONTEND_ORIGIN", "http://localhost:5173") or "http://localhost:5173"
-    data_dir: Path = _get_data_dir()
+    data_dir: Path = get_data_root()
 
     stt_provider: str = get_env("STT_PROVIDER", "openai") or "openai"
     llm_provider: str = get_env("LLM_PROVIDER", "openai") or "openai"
