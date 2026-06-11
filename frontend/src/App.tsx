@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteReminder, fetchReminders } from "./api";
 import { ChatPanel } from "./components/ChatPanel";
 import { KeoBotMascot } from "./components/KeoBotMascot";
@@ -10,6 +10,8 @@ import { VoiceRecorder, type VoiceRecorderHandle } from "./components/VoiceRecor
 import { useWakeWord } from "./hooks/useWakeWord";
 import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
 import { mapAppStateToMascot } from "./utils/keobotMascotState";
+import { voiceStatusToSessionState, getSessionLabel, isIdle, canInterrupt } from "./utils/voiceSessionState";
+import { play as audioPlay, stop as audioStop, isPlaying as audioIsPlaying, subscribe as audioSubscribe } from "./utils/audioPlaybackController";
 import type {
   AutoConversationStatus,
   ConversationMode,
@@ -17,6 +19,7 @@ import type {
   KeoBotReminder,
   KeoBotSettings,
   VoiceChatResponse,
+  VoiceSessionState,
   VoiceStatus,
   WakeWordStatus,
 } from "./types";
@@ -33,22 +36,15 @@ const INITIAL_CONVERSATION: ConversationState = {
   updatedAt: null,
 };
 
-const STATUS_LABELS: Record<VoiceStatus, string> = {
+const SESSION_LABELS: Record<VoiceSessionState, string> = {
   idle: "Sẵn sàng",
-  recording: "Đang nghe...",
-  uploading: "Đang tải lên...",
-  thinking: "Kẹo Thông Minh đang suy nghĩ...",
-  speaking: "Kẹo Thông Minh đang trả lời...",
+  wake_listening: 'Đang lắng nghe "Kẹo Thông Minh ơi"',
+  command_listening: "Đang nghe bạn nói...",
+  uploading: "Đang gửi âm thanh...",
+  thinking: "KeoBot đang suy nghĩ...",
+  speaking: "KeoBot đang trả lời...",
+  interrupted: "Đã dừng câu trả lời",
   error: "Có lỗi",
-};
-
-const STATUS_MESSAGES: Record<VoiceStatus, string> = {
-  idle: "Sẵn sàng để nghe câu hỏi tiếp theo.",
-  recording: "Đang nghe...",
-  uploading: "Đang tải audio lên backend...",
-  thinking: "Kẹo Thông Minh đang suy nghĩ...",
-  speaking: "Kẹo Thông Minh đang trả lời...",
-  error: "Có lỗi. Hãy kiểm tra lại microphone hoặc backend.",
 };
 
 const WAKE_WORD_LABELS: Record<WakeWordStatus, string> = {
@@ -68,6 +64,7 @@ function getDesktopMode(): boolean {
 
 export default function App() {
   const [status, setStatus] = useState<VoiceStatus>("idle");
+  const [sessionState, setSessionState] = useState<VoiceSessionState>("idle");
   const [conversation, setConversation] = useState<ConversationState>(INITIAL_CONVERSATION);
   const [error, setError] = useState<string | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
@@ -82,9 +79,10 @@ export default function App() {
   const [remindersLoading, setRemindersLoading] = useState(false);
   const [remindersError, setRemindersError] = useState<string | null>(null);
   const [dueReminder, setDueReminder] = useState<KeoBotReminder | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const voiceRecorderRef = useRef<VoiceRecorderHandle | null>(null);
   const wakeWordCommandPendingRef = useRef(false);
+  const isRequestInFlightRef = useRef(false);
   const isDesktopMode = getDesktopMode();
   const wakeWordEnabled = isDesktopMode && desktopSettings.BACKGROUND_ASSISTANT_ENABLED && desktopSettings.WAKE_WORD_ENABLED;
   const wakeWord = useWakeWord({
@@ -150,8 +148,18 @@ export default function App() {
     }
 
     const unsubscribe = window.keobotDesktop.onWakeWordDetected((phrase) => {
+      if (isRequestInFlightRef.current) {
+        return;
+      }
+
       wakeWordCommandPendingRef.current = true;
       setHandsfreeMessage(phrase ? `Kẹo Thông Minh đã nghe bạn gọi: ${phrase}` : "Kẹo Thông Minh đã nghe bạn gọi.");
+
+      if (audioIsPlaying()) {
+        audioStop();
+        setSessionState("command_listening");
+        setStatus("recording");
+      }
     });
 
     return () => {
@@ -186,10 +194,20 @@ export default function App() {
     }
 
     const unsubscribeStart = window.keobotDesktop.onStartListening(() => {
+      if (isRequestInFlightRef.current) {
+        return;
+      }
+
       const isWakeWordTurn = wakeWordCommandPendingRef.current;
 
       if (wakeWord.enabled) {
         wakeWord.stopWakeWord();
+      }
+
+      if (audioIsPlaying()) {
+        audioStop();
+        setSessionState("command_listening");
+        setStatus("recording");
       }
 
       if (isWakeWordTurn) {
@@ -198,7 +216,6 @@ export default function App() {
         setHandsfreeMessage("Hands-free listening activated. Press Ctrl+Shift+K again or Stop to cancel.");
       }
 
-      stopResponseAudio();
       if (isWakeWordTurn) {
         voiceRecorderRef.current?.startWakeWordTurn();
       } else {
@@ -290,37 +307,48 @@ export default function App() {
 
     setAudioBlocked(false);
     setStatus("speaking");
+    setSessionState("speaking");
 
-    audioRef.current?.pause();
-    const audio = new Audio(url);
-    audioRef.current = audio;
-    audio.onended = () => {
-      setStatus("idle");
-      if (wakeWord.enabled && wakeWord.supported && desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE) {
-        wakeWord.startWakeWord();
+    try {
+      await audioPlay(url);
+      if (!audioIsPlaying()) {
+        setAudioBlocked(false);
+        setStatus("idle");
+        setSessionState((current) => (current === "interrupted" ? "interrupted" : "idle"));
+        if (wakeWord.enabled && wakeWord.supported && desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE && sessionState !== "interrupted") {
+          wakeWord.startWakeWord();
+        }
       }
-    };
-    audio.onerror = () => {
+    } catch {
       setAudioBlocked(true);
       setError("Không thể phát file audio phản hồi.");
       setStatus("error");
-    };
-
-    try {
-      await audio.play();
-    } catch {
-      setAudioBlocked(true);
-      setStatus("idle");
+      setSessionState("error");
     }
   };
 
-  const stopResponseAudio = () => {
-    audioRef.current?.pause();
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-    }
+  const stopResponseAudio = (reason: "manual" | "interrupt" = "manual") => {
+    audioStop();
+    setAudioBlocked(false);
+    setSessionState("interrupted");
     setStatus("idle");
+    if (reason === "interrupt") {
+      wakeWordCommandPendingRef.current = true;
+    }
   };
+
+  const interruptForNewTurn = useCallback(() => {
+    const wasSpeaking = audioIsPlaying();
+    if (wasSpeaking) {
+      audioStop();
+    }
+    if (wakeWord.enabled) {
+      wakeWord.stopWakeWord();
+    }
+    setSessionState("command_listening");
+    setStatus("recording");
+    return wasSpeaking;
+  }, [wakeWord]);
 
   useEffect(() => {
     if (conversationMode === "auto") {
@@ -331,8 +359,12 @@ export default function App() {
       return;
     }
 
+    if (sessionState === "interrupted") {
+      return;
+    }
+
     void playResponseAudio(conversation.audioUrl);
-  }, [conversation.audioUrl, conversationMode]);
+  }, [conversation.audioUrl, conversationMode, sessionState]);
 
   const handleVoiceResponse = (response: VoiceChatResponse) => {
     setConversation({
@@ -349,6 +381,8 @@ export default function App() {
     setError(null);
     setAudioBlocked(false);
     setStatus("speaking");
+    setSessionState("speaking");
+    isRequestInFlightRef.current = false;
 
     if (response.action === "reminder_created" && response.reminder) {
       const createdReminder = response.reminder;
@@ -363,6 +397,8 @@ export default function App() {
     setError(message);
     if (message) {
       setStatus("error");
+      setSessionState("error");
+      isRequestInFlightRef.current = false;
     }
   };
 
@@ -371,7 +407,11 @@ export default function App() {
     setReminders((current) => current.filter((item) => item.id !== reminderId));
   };
 
-  const statusMessage = error && status === "error" ? error : STATUS_MESSAGES[status];
+  useEffect(() => {
+    setSessionState(voiceStatusToSessionState(status, wakeWord.enabled && wakeWord.supported && wakeWord.status === "listening_for_wake_word"));
+  }, [status, wakeWord.enabled, wakeWord.supported, wakeWord.status]);
+
+  const statusMessage = error && status === "error" ? error : getSessionLabel(sessionState);
   const providerSnapshot = desktopSettings ?? DEFAULT_SETTINGS;
   const mascotState = mapAppStateToMascot({
     voiceStatus: status,
@@ -496,17 +536,25 @@ export default function App() {
           <VoiceRecorder
             ref={voiceRecorderRef}
             status={status}
+            sessionState={sessionState}
             onStatusChange={setStatus}
             onResponse={handleVoiceResponse}
             onError={handleRecorderError}
-            onStopSpeaking={stopResponseAudio}
+            onStopSpeaking={() => stopResponseAudio("manual")}
             onModeChange={setConversationMode}
             onAutoStatusChange={setAutoStatus}
           />
           <div className="status-pill recorder-status" aria-live="polite">
             <span className="status-dot" />
-            {STATUS_LABELS[status]}
+            {SESSION_LABELS[sessionState]}
           </div>
+          {sessionState === "speaking" ? (
+            <div className="audio-actions" style={{ marginTop: "0.5rem" }}>
+              <button className="action-button secondary" type="button" onClick={() => stopResponseAudio("manual")}>
+                Dừng nói
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
 

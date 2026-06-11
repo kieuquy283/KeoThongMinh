@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -32,6 +32,7 @@ from app.services.memory_store import get_memory_store
 from app.services.tool_router import detect_tool_intent
 from app.services.reminder_store import get_reminder_store
 from app.services.voice_chat import run_voice_chat
+from app.services.voice_session_manager import cancel_session, cleanup_session, create_session, get_active_session_ids, is_cancelled
 from app.tools.currency_tool import get_currency_info
 from app.tools.search_tool import get_search_info
 from app.tools.time_tool import get_time_info
@@ -153,6 +154,40 @@ async def voice_chat(audio: UploadFile = File(...)) -> VoiceChatResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.websocket("/ws/voice-turn")
+async def voice_turn_ws(websocket: WebSocket) -> None:
+    await websocket.accept()
+    session_id = create_session()
+    try:
+        await websocket.send_json({"event": "session_started", "session_id": session_id})
+        while True:
+            data = await websocket.receive_json()
+            action = data.get("action", "")
+            if action == "cancel":
+                cancel_session(session_id)
+                await websocket.send_json({"event": "cancelled", "session_id": session_id})
+                break
+            if action == "ping":
+                await websocket.send_json({"event": "pong", "session_id": session_id})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        cleanup_session(session_id)
+
+
+@app.post("/voice-turn/{session_id}/cancel")
+async def cancel_voice_turn(session_id: str):
+    cancelled = cancel_session(session_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return {"ok": True, "session_id": session_id, "cancelled_at": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/voice-turn/sessions")
+async def list_voice_sessions():
+    return {"active_sessions": get_active_session_ids()}
 
 
 @app.get("/tools/status", response_model=ToolsStatusResponse)

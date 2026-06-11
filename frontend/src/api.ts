@@ -47,6 +47,36 @@ export async function sendVoiceChat(audioBlob: Blob, signal?: AbortSignal): Prom
   return (await response.json()) as VoiceChatResponse;
 }
 
+export async function cancelVoiceTurn(sessionId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/voice-turn/${encodeURIComponent(sessionId)}/cancel`, {
+      method: "POST",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+export type VoiceTurnEvent =
+  | { event: "session_started"; session_id: string }
+  | { event: "transcribing"; session_id: string }
+  | { event: "thinking"; session_id: string }
+  | { event: "tts_ready"; session_id: string; audio_url: string }
+  | { event: "completed"; session_id: string }
+  | { event: "cancelled"; session_id: string }
+  | { event: "error"; session_id: string; message: string }
+  | { event: "pong"; session_id: string };
+
+export function createVoiceTurnWebSocket(): WebSocket | null {
+  try {
+    const wsUrl = API_BASE_URL.replace(/^http:/, "ws:").replace(/\/$/, "") + "/ws/voice-turn";
+    return new WebSocket(wsUrl);
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchReminders(): Promise<KeoBotReminder[]> {
   const response = await fetch(`${API_BASE_URL}/reminders`);
   if (!response.ok) {

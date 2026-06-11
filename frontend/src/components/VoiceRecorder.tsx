@@ -1,16 +1,19 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import { sendVoiceChat } from "../api";
 import { useAutoVoiceConversation } from "../hooks/useAutoVoiceConversation";
+import { canInterrupt, isIdle } from "../utils/voiceSessionState";
 import type {
   AutoConversationStatus,
   ConversationMode,
   VoiceChatResponse,
+  VoiceSessionState,
   VoiceStatus,
 } from "../types";
 
 interface VoiceRecorderProps {
   status: VoiceStatus;
+  sessionState: VoiceSessionState;
   onStatusChange: (status: VoiceStatus) => void;
   onResponse: (response: VoiceChatResponse) => void;
   onError: (message: string | null) => void;
@@ -26,12 +29,14 @@ export interface VoiceRecorderHandle {
   cancelCurrentTurn: () => void;
 }
 
-const BUTTON_LABELS: Record<VoiceStatus, string> = {
+const BUTTON_LABELS: Record<string, string> = {
   idle: "Bắt đầu nghe",
-  recording: "Dừng nghe",
+  wake_listening: "Bắt đầu nghe",
+  command_listening: "Dừng nghe",
   uploading: "Đang tải lên...",
-  thinking: "Kẹo Thông Minh đang suy nghĩ...",
+  thinking: "KeoBot đang suy nghĩ...",
   speaking: "Đang phát...",
+  interrupted: "Bắt đầu nghe",
   error: "Ghi âm lại",
 };
 
@@ -68,6 +73,7 @@ function mapAutoStatusToVoiceStatus(status: AutoConversationStatus): VoiceStatus
 
 export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>(function VoiceRecorder({
   status,
+  sessionState,
   onStatusChange,
   onResponse,
   onError,
@@ -82,6 +88,8 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const lastAutoResponseRef = useRef<VoiceChatResponse | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const recordingRef = useRef(false);
 
   const autoConversation = useAutoVoiceConversation();
 
@@ -117,12 +125,18 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
   }, [autoConversation.lastResponse, mode, onResponse]);
 
   const stopStream = () => {
+    recordingRef.current = false;
+    abortControllerRef.current?.abort();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     mediaRecorderRef.current = null;
   };
 
   const startRecording = async () => {
+    if (recordingRef.current) {
+      return;
+    }
+
     if (!navigator.mediaDevices?.getUserMedia) {
       onError("Trình duyệt không hỗ trợ ghi âm. Hãy dùng bản desktop hoặc một trình duyệt hỗ trợ microphone.");
       onStatusChange("error");
@@ -131,6 +145,8 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
 
     try {
       onError(null);
+      recordingRef.current = true;
+      abortControllerRef.current = new AbortController();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       chunksRef.current = [];
@@ -152,14 +168,27 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       };
 
       recorder.onstop = async () => {
+        if (!recordingRef.current) {
+          stopStream();
+          return;
+        }
+
         try {
           onStatusChange("uploading");
           const audioBlob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
           await new Promise((resolve) => window.setTimeout(resolve, 100));
+          if (!recordingRef.current) {
+            stopStream();
+            return;
+          }
           onStatusChange("thinking");
-          const response = await sendVoiceChat(audioBlob);
+          const response = await sendVoiceChat(audioBlob, abortControllerRef.current?.signal);
           onResponse(response);
         } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            stopStream();
+            return;
+          }
           const message = error instanceof Error ? error.message : "Không gửi được audio lên backend.";
           onError(message);
           onStatusChange("error");
@@ -171,6 +200,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       recorder.start();
       onStatusChange("recording");
     } catch (error) {
+      recordingRef.current = false;
       const message =
         error instanceof Error && (error.name === "NotAllowedError" || error.name === "SecurityError")
           ? "Không lấy được quyền microphone. Hãy cho phép microphone trong Windows hoặc trình duyệt rồi thử lại."
@@ -184,16 +214,18 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
   };
 
   const stopRecording = () => {
+    recordingRef.current = false;
+    abortControllerRef.current?.abort();
     mediaRecorderRef.current?.stop();
   };
 
   const handleManualClick = () => {
-    if (status === "recording") {
+    if (sessionState === "command_listening") {
       stopRecording();
       return;
     }
 
-    if (status === "uploading" || status === "thinking" || status === "speaking") {
+    if (sessionState === "uploading" || sessionState === "thinking" || sessionState === "speaking") {
       return;
     }
 
@@ -232,23 +264,23 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       return;
     }
 
-    if (status === "speaking") {
+    if (canInterrupt(sessionState)) {
       onStopSpeaking?.();
       void startRecording();
       return;
     }
 
-    if (status === "idle" || status === "error") {
+    if (isIdle(sessionState) || sessionState === "error") {
       void startRecording();
     }
   };
 
   const startWakeWordTurn = () => {
-    if (status === "speaking") {
+    if (canInterrupt(sessionState)) {
       onStopSpeaking?.();
     }
 
-    if (status === "recording" || status === "idle" || status === "error") {
+    if (sessionState === "command_listening" || isIdle(sessionState) || sessionState === "error") {
       void startRecording();
     }
   };
@@ -259,12 +291,12 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       return;
     }
 
-    if (status === "recording") {
+    if (sessionState === "command_listening") {
       stopRecording();
       return;
     }
 
-    if (status === "speaking") {
+    if (canInterrupt(sessionState)) {
       onStopSpeaking?.();
       onStatusChange("idle");
     }
@@ -278,7 +310,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       stopHandsFree,
       cancelCurrentTurn: autoConversation.cancelCurrentTurn,
     }),
-    [autoConversation.cancelCurrentTurn, mode, onStopSpeaking, startHandsFree, startWakeWordTurn, stopHandsFree, status],
+    [autoConversation.cancelCurrentTurn, sessionState, onStopSpeaking, startHandsFree, startWakeWordTurn, stopHandsFree, status],
   );
 
   return (
@@ -313,14 +345,14 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
           <p className="muted-copy">Nhấn để bắt đầu, nhấn lại để dừng. Sau đó frontend sẽ gửi audio lên backend.</p>
           <div className="audio-actions">
             <button
-              className={`action-button${status === "recording" ? " danger" : ""}`}
+              className={`action-button${sessionState === "command_listening" ? " danger" : ""}`}
               type="button"
               onClick={handleManualClick}
-              disabled={status === "uploading" || status === "thinking" || status === "speaking"}
+              disabled={sessionState === "uploading" || sessionState === "thinking" || sessionState === "speaking"}
             >
-              {BUTTON_LABELS[status]}
+              {BUTTON_LABELS[sessionState] ?? BUTTON_LABELS.idle}
             </button>
-            {status === "speaking" ? (
+            {sessionState === "speaking" ? (
               <button className="action-button secondary" type="button" onClick={onStopSpeaking}>
                 Dừng trả lời
               </button>

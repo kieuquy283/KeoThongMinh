@@ -2,6 +2,7 @@ import type {
   AutoConversationStatus,
   ChatAction,
   Emotion,
+  VoiceSessionState,
   VoiceStatus,
   WakeWordStatus,
 } from "../types";
@@ -184,6 +185,7 @@ export function shouldBlink(status: MascotStatus, emotion?: MascotEmotion): bool
 
 export function mapAppStateToMascot(input: {
   voiceStatus: VoiceStatus;
+  sessionState?: VoiceSessionState;
   autoStatus: AutoConversationStatus;
   conversationMode: "manual" | "auto";
   wakeWordEnabled: boolean;
@@ -198,6 +200,7 @@ export function mapAppStateToMascot(input: {
 } {
   const {
     voiceStatus,
+    sessionState,
     autoStatus,
     conversationMode,
     wakeWordEnabled,
@@ -214,6 +217,10 @@ export function mapAppStateToMascot(input: {
 
   if (hasDueReminder || latestAction === "reminder_created") {
     return { status: "reminder", emotion: "happy" };
+  }
+
+  if (sessionState === "interrupted") {
+    return { status: "idle", emotion: "surprised" };
   }
 
   if (wakeWordEnabled && ["starting", "listening_for_wake_word"].includes(wakeWordStatus)) {

@@ -104,6 +104,16 @@ export interface VoiceChatResponse {
 
 export type VoiceStatus = "idle" | "recording" | "uploading" | "thinking" | "speaking" | "error";
 
+export type VoiceSessionState =
+  | "idle"
+  | "wake_listening"
+  | "command_listening"
+  | "uploading"
+  | "thinking"
+  | "speaking"
+  | "interrupted"
+  | "error";
+
 export interface ConversationState {
   userText: string;
   botText: string;
