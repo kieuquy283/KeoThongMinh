@@ -29,6 +29,11 @@
 - [ ] `cd desktop && npm run validate:artifacts` — all checks pass
 - [ ] `cd desktop && npm run check:updates` — update metadata validated
 
+### Signing Validation (signed releases only)
+- [ ] `cd desktop && npm run check:signing` — shows "PFX configured" or "Azure Trusted Signing configured"
+- [ ] `cd desktop && npm run verify:signature` — reports "SIGNED" for both portable and setup exes
+- [ ] `cd desktop && npm run validate:signing` — both check + verify pass
+
 ### Full Validation
 - [ ] `cd desktop && npm run validate:all` — all checks pass
 
@@ -44,6 +49,25 @@
 ### Required Secrets
 - `GH_TOKEN` or `GITHUB_TOKEN` with `contents: write` permission
 - Set in GitHub → Settings → Secrets and variables → Actions
+
+### Optional Secrets (signing)
+For signed releases (`signed=true`):
+
+**PFX signing (traditional):**
+- `CSC_LINK` — base64-encoded PFX file content or file path
+- `CSC_KEY_PASSWORD` — PFX certificate password
+- `WIN_CSC_LINK` — Windows-specific PFX override (optional)
+- `WIN_CSC_KEY_PASSWORD` — Windows-specific PFX password (optional)
+
+**Azure Trusted Signing:**
+- `AZURE_TENANT_ID`
+- `AZURE_CLIENT_ID`
+- `AZURE_CLIENT_SECRET`
+- `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`
+- `AZURE_TRUSTED_SIGNING_CERT_PROFILE_NAME`
+- `AZURE_TRUSTED_SIGNING_ENDPOINT`
+
+**Do not commit certificate files or passwords.**
 
 ## Manual QA
 - [ ] Normal text chat works
@@ -96,5 +120,26 @@
 - [ ] Update release notes on GitHub
 - [ ] Verify update metadata is reachable from the release
 
-## SmartScreen Warning
-The first few releases will trigger Windows SmartScreen since the executable is unsigned. Users must click "More info" → "Run anyway" to install. Consider code signing for future releases.
+## SmartScreen & Code Signing
+
+### Unsigned Releases
+- Windows SmartScreen will warn: "Windows protected your PC"
+- Users must click "More info" → "Run anyway" to install
+- This is expected for unsigned builds
+
+### Signed Releases
+- Signing with a valid OV/EV code signing certificate reduces warnings
+- SmartScreen reputation still needs time and download volume
+- First-time signed releases may still show warnings until enough users download
+
+### Code Signing Options
+
+1. **OV Code Signing** — standard option, works immediately, costs ~$200-400/year
+2. **EV Code Signing** — higher trust, requires hardware token, costs ~$300-600/year
+3. **Azure Trusted Signing** — cloud-based, no hardware token, pay-per-signature
+
+### Certificate Security
+- Certificate files (.pfx/.p12) must **never** be committed
+- Certificate passwords must **never** be stored in source
+- Use GitHub Secrets or CI environment variables only
+- Set `FORCE_CODE_SIGNING=true` in CI to fail if signing is unavailable

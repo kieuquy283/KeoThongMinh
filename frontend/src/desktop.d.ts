@@ -35,6 +35,8 @@ declare global {
       getAppInfo: () => Promise<{
         appVersion: string;
         buildMode: string;
+        releaseMode: string;
+        signedBuild: boolean;
         commitHash: string;
         updateChannel: string;
         publishProvider: string | null;

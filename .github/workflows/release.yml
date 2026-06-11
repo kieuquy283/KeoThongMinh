@@ -12,6 +12,11 @@ on:
         required: false
         default: true
         type: boolean
+      signed:
+        description: "Enable code signing (requires CSC_LINK + CSC_KEY_PASSWORD or Azure secrets)."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -109,17 +114,68 @@ jobs:
         working-directory: desktop
         shell: powershell
 
-      - name: Build desktop package
+      - name: Check signing config
+        run: node scripts/check_signing_config.js
+        working-directory: desktop
+        shell: powershell
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD || '' }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET || '' }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME || '' }}
+          AZURE_TRUSTED_SIGNING_CERT_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE_NAME || '' }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT || '' }}
+          FORCE_CODE_SIGNING: ${{ inputs.signed && 'true' || 'false' }}
+
+      - name: Build desktop package (unsigned)
+        if: ${{ !inputs.signed }}
         run: npm run build
         working-directory: desktop
         shell: powershell
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_MODE: unsigned-release
+
+      - name: Build desktop package (signed)
+        if: ${{ inputs.signed }}
+        run: npm run build
+        working-directory: desktop
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_MODE: signed-release
+          FORCE_CODE_SIGNING: "true"
+          CSC_LINK: ${{ secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD || '' }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || '' }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID || '' }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET || '' }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME || '' }}
+          AZURE_TRUSTED_SIGNING_CERT_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE_NAME || '' }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT || '' }}
 
       - name: Run release artifact validation
         run: node scripts/validate_release_artifacts.js
         working-directory: desktop
         shell: powershell
+        env:
+          FORCE_CODE_SIGNING: ${{ inputs.signed && 'true' || 'false' }}
+          CSC_LINK: ${{ secrets.CSC_LINK || '' }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK || '' }}
+
+      - name: Verify Windows signatures
+        if: ${{ inputs.signed }}
+        run: node scripts/verify_windows_signature.js
+        working-directory: desktop
+        shell: powershell
+        env:
+          REQUIRE_SIGNED_ARTIFACTS: "true"
 
       - name: Run packaged smoke test
         run: node scripts/smoke_packaged_app.js

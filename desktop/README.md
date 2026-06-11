@@ -227,3 +227,60 @@ Allowed memory keys:
 - **Publish config**: GitHub provider, `releaseType: "draft"` — no automatic notifications
 - **UI behavior**: Settings panel shows "Ready to check updates" when publish is configured, "Auto update is not configured for this build" when publish is null
 - **Diagnostics**: Exposes `publishProvider`, `updateChannel`, `backendVersion` in Settings
+
+## v1.5 — Code Signing & Windows Trust
+
+### Signing Modes
+
+| Mode | Description | Command |
+|------|-------------|---------|
+| **dev** | Unsigned local build | `npm run dev` |
+| **unsigned-release** | CI release without signing (SmartScreen warns) | `npm run build` |
+| **signed-release** | CI release with Authenticode signing | `npm run release:signed` |
+
+### Environment Variables
+
+Set these in CI (GitHub Secrets) or local shell — **never commit them**:
+
+- `CSC_LINK` / `WIN_CSC_LINK` — PFX file path or base64 content
+- `CSC_KEY_PASSWORD` / `WIN_CSC_KEY_PASSWORD` — PFX password
+- `FORCE_CODE_SIGNING=true` — fail build if signing unavailable
+- `REQUIRE_SIGNED_ARTIFACTS=true` — fail verification if unsigned
+
+### Scripts
+
+- `npm run check:signing` — detect signing config (no secrets printed)
+- `npm run verify:signature` — verify Authenticode on Windows via `Get-AuthenticodeSignature`
+- `npm run validate:signing` — check config + verify signature
+- `npm run release:signed` — build with signing enforced
+
+### Azure Trusted Signing (optional)
+
+Set these instead of PFX vars:
+
+- `AZURE_TENANT_ID`
+- `AZURE_CLIENT_ID`
+- `AZURE_CLIENT_SECRET`
+- `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`
+- `AZURE_TRUSTED_SIGNING_CERT_PROFILE_NAME`
+- `AZURE_TRUSTED_SIGNING_ENDPOINT`
+
+### Diagnostics
+
+Settings → Diagnostics & About shows `Release mode` and `Signed build` (yes/no).
+
+### SmartScreen
+
+- Signing reduces SmartScreen warnings but does not guarantee instant trust.
+- Reputation requires time and download volume.
+- Always test signed builds on a clean Windows VM before distribution.
+
+### Files Changed (v1.5)
+
+| File | Change |
+|---|---|
+| `desktop/package.json` | Added signing scripts |
+| `desktop/main.js` | `signedBuild`, `releaseMode` in getAppInfo |
+| `desktop/scripts/check_signing_config.js` | New |
+| `desktop/scripts/verify_windows_signature.js` | New |
+| `desktop/scripts/validate_release_artifacts.js` | Extended cert/secret checks |

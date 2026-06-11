@@ -104,6 +104,101 @@ const mainJs = fs.readFileSync(path.join(desktopRoot, "main.js"), "utf8");
 const hasDefaultEmptyKeys = mainJs.includes('""') && mainJs.includes("API_KEY");
 check("Config defaults are safe", hasDefaultEmptyKeys, "defaults use empty strings");
 
+// 10. No certificate/private key files in packaged output
+const certExts = [".pfx", ".p12", ".pem", ".key", ".crt", ".cer", ".p7b", ".spc"];
+const certFiles = [];
+function scanForCerts(dir, depth = 0) {
+  if (depth > 3 || !fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory() && entry.name !== "node_modules" && !entry.name.startsWith(".")) {
+      scanForCerts(fullPath, depth + 1);
+    } else if (certExts.some((ext) => entry.name.toLowerCase().endsWith(ext))) {
+      certFiles.push(fullPath);
+    }
+  }
+}
+scanForCerts(releaseDir);
+check("No certificate files in release", certFiles.length === 0,
+  certFiles.length > 0 ? certFiles.join(", ") : "none found");
+
+// 11. No signing password leaks in source
+const allSourceDirs = [
+  path.join(desktopRoot, "scripts"),
+  path.join(desktopRoot, "services"),
+  path.join(repoRoot, ".github"),
+];
+let signSecretLeak = false;
+const signSecretPatterns = [
+  /CSC_KEY_PASSWORD\s*=\s*["'][^"']+["']/,
+  /WIN_CSC_KEY_PASSWORD\s*=\s*["'][^"']+["']/,
+  /certificatePassword\s*[:=]\s*["'][^"']+["']/,
+  /AZURE_CLIENT_SECRET\s*=\s*["'][^"']+["']/,
+];
+for (const dir of allSourceDirs) {
+  if (!fs.existsSync(dir)) continue;
+  function scanDir(d) {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const fullPath = path.join(d, entry.name);
+      if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
+        scanDir(fullPath);
+      } else if (entry.isFile() && /\.(js|yml|yaml|json|md)$/i.test(entry.name)) {
+        const content = fs.readFileSync(fullPath, "utf8");
+        for (const pattern of signSecretPatterns) {
+          const matches = content.match(pattern);
+          if (matches && !content.includes("process.env.") && !content.includes("${{") && !content.includes("***")) {
+            console.warn(`  WARN: potential signing secret leak in ${path.relative(repoRoot, fullPath)}: ${pattern}`);
+            signSecretLeak = true;
+          }
+        }
+      }
+    }
+  }
+  scanDir(dir);
+}
+check("No signing secret leaks", !signSecretLeak,
+  signSecretLeak ? "potential leak(s) found (see above)" : "none found");
+
+// 12. Verify no .env files in packaged resources
+const packagedResources = path.join(releaseDir, "win-unpacked", "resources");
+const envInPackaged = [];
+function scanForEnvInPackaged(dir, depth = 0) {
+  if (depth > 3 || !fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory() && !entry.name.startsWith(".")) {
+      scanForEnvInPackaged(fullPath, depth + 1);
+    } else if (entry.name === ".env" || entry.name.endsWith(".env.local") || entry.name.endsWith(".env.production")) {
+      envInPackaged.push(fullPath);
+    }
+  }
+}
+scanForEnvInPackaged(packagedResources);
+check("No .env files in packaged resources", envInPackaged.length === 0,
+  envInPackaged.length > 0 ? envInPackaged.join(", ") : "none found");
+
+// 13. Signing config check (optional — does not fail unsigned dev builds)
+const cscLink = process.env.CSC_LINK || process.env.WIN_CSC_LINK || "";
+const cscPassword = process.env.CSC_KEY_PASSWORD || process.env.WIN_CSC_KEY_PASSWORD || "";
+const azureConfigured = !!(
+  process.env.AZURE_TENANT_ID &&
+  process.env.AZURE_CLIENT_ID &&
+  process.env.AZURE_CLIENT_SECRET &&
+  process.env.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME &&
+  process.env.AZURE_TRUSTED_SIGNING_CERT_PROFILE_NAME
+);
+const forceSigning = process.env.FORCE_CODE_SIGNING === "true";
+const hasSigningConfig = !!(cscLink || cscPassword || azureConfigured);
+let signingStatus = "unsigned (dev)";
+if (cscLink || cscPassword) {
+  signingStatus = cscLink && cscPassword ? "PFX configured" : "PFX partial";
+}
+if (azureConfigured) {
+  signingStatus = "Azure Trusted Signing configured";
+}
+check(`Signing status (${signingStatus})`, !forceSigning || hasSigningConfig,
+  forceSigning && !hasSigningConfig ? "FORCE_CODE_SIGNING=true but no signing config" : "ok");
+
 // Results
 const passed = checks.filter((c) => c.ok).length;
 const failed = checks.filter((c) => !c.ok).length;

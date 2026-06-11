@@ -85,6 +85,13 @@ function hasPublishConfig() {
   }
 }
 
+function hasSigningConfig() {
+  const cscLink = process.env.CSC_LINK || process.env.WIN_CSC_LINK || "";
+  if (cscLink) return true;
+  if (process.env.AZURE_TENANT_ID && process.env.AZURE_CLIENT_ID && process.env.AZURE_CLIENT_SECRET) return true;
+  return false;
+}
+
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "config.json");
 }
@@ -888,6 +895,8 @@ app.whenReady().then(() => {
   ipcMain.handle("keobot:getAppInfo", async () => ({
     appVersion: app.isPackaged ? app.getVersion() : packageJson.version,
     buildMode: BUILD_MODE,
+    releaseMode: process.env.RELEASE_MODE || (app.isPackaged ? "unsigned-release" : "dev"),
+    signedBuild: app.isPackaged ? hasSigningConfig() : false,
     commitHash: COMMIT_HASH,
     updateChannel: UPDATE_CHANNEL,
     publishProvider: hasPublishConfig() ? "github" : null,

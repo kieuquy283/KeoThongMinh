@@ -82,7 +82,7 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
     SERPAPI_API_KEY: false,
     PICOVOICE_ACCESS_KEY: false,
   });
-  const [appInfo, setAppInfo] = useState<{ appVersion: string; buildMode: string; commitHash: string; updateChannel: string; publishProvider: string | null } | null>(null);
+  const [appInfo, setAppInfo] = useState<{ appVersion: string; buildMode: string; releaseMode: string; signedBuild: boolean; commitHash: string; updateChannel: string; publishProvider: string | null } | null>(null);
   const [backendHealthy, setBackendHealthy] = useState(false);
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -184,6 +184,8 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
     if (appInfo) {
       lines.push(`App version: ${appInfo.appVersion}`);
       lines.push(`Build mode: ${appInfo.buildMode}`);
+      lines.push(`Release mode: ${appInfo.releaseMode}`);
+      lines.push(`Signed build: ${appInfo.signedBuild ? "yes" : "no"}`);
       if (appInfo.commitHash) lines.push(`Commit: ${appInfo.commitHash.slice(0, 8)}`);
       lines.push(`Update channel: ${appInfo.updateChannel}`);
       lines.push(`Publish provider: ${appInfo.publishProvider || "none"}`);
@@ -530,6 +532,16 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
                     <code>{appInfo.commitHash.slice(0, 8)}</code>
                   </div>
                 )}
+                <div className="settings-field">
+                  <span>Release mode</span>
+                  <code>{appInfo.releaseMode}</code>
+                </div>
+                <div className="settings-field">
+                  <span>Signed build</span>
+                  <code className={appInfo.signedBuild ? "status-ok" : "status-error"}>
+                    {appInfo.signedBuild ? "Yes" : "No"}
+                  </code>
+                </div>
                 <div className="settings-field">
                   <span>Update channel</span>
                   <code>{appInfo.updateChannel}</code>

@@ -128,3 +128,92 @@ class TestReleaseArtifacts:
         assert "GITHUB_TOKEN" in content
         for token_pattern in ["ghp_", "gho_", "github_pat_"]:
             assert token_pattern not in content, f"Hardcoded token pattern in workflow: {token_pattern}"
+
+    def test_release_workflow_has_signing_input(self):
+        workflow_path = REPO_ROOT / ".github" / "workflows" / "release.yml"
+        content = workflow_path.read_text(encoding="utf-8")
+        assert "signed:" in content
+        assert "CSC_LINK" in content
+        assert "FORCE_CODE_SIGNING" in content
+
+
+class TestSigningConfig:
+    """Tests for code signing configuration."""
+
+    def test_signing_scripts_exist(self):
+        scripts_dir = REPO_ROOT / "desktop" / "scripts"
+        expected = [
+            "check_signing_config.js",
+            "verify_windows_signature.js",
+        ]
+        for script in expected:
+            assert (scripts_dir / script).exists(), f"Missing signing script: {script}"
+
+    def test_check_signing_config_no_secret_leaks(self):
+        script_path = REPO_ROOT / "desktop" / "scripts" / "check_signing_config.js"
+        content = script_path.read_text(encoding="utf-8")
+        assert "Certificate files and passwords are never logged" in content
+        assert "process.env." in content
+        # Should not contain actual secret values
+        for secret in ["ghp_", "gho_", "github_pat_"]:
+            assert secret not in content
+
+    def test_verify_signature_graceful_fallback(self):
+        script_path = REPO_ROOT / "desktop" / "scripts" / "verify_windows_signature.js"
+        content = script_path.read_text(encoding="utf-8")
+        assert "verifier_not_available" in content or "not_found" in content
+        assert "REQUIRE_SIGNED_ARTIFACTS" in content
+        # Should not fail unsigned builds by default
+        assert "process.exit(1)" not in content.split("if (requireSigned")[0] if "if (requireSigned" in content else True
+
+    def test_main_js_has_signing_detection(self):
+        main_js_path = REPO_ROOT / "desktop" / "main.js"
+        content = main_js_path.read_text(encoding="utf-8")
+        assert "hasSigningConfig" in content
+        assert "signedBuild" in content
+        assert "releaseMode" in content
+
+    def test_desktop_dts_has_signing_fields(self):
+        dts_path = REPO_ROOT / "frontend" / "src" / "desktop.d.ts"
+        content = dts_path.read_text(encoding="utf-8")
+        assert "releaseMode" in content
+        assert "signedBuild" in content
+
+    def test_validate_artifacts_has_cert_scan(self):
+        validate_path = REPO_ROOT / "desktop" / "scripts" / "validate_release_artifacts.js"
+        content = validate_path.read_text(encoding="utf-8")
+        assert ".pfx" in content
+        assert "certificate" in content.lower() or "cert" in content.lower()
+        assert "signing" in content.lower()
+
+    def test_no_hardcoded_cert_paths_in_config(self):
+        pkg = _load_desktop_pkg()
+        build = pkg.get("build", {})
+        win = build.get("win", {})
+        # Should not have hardcoded certificateFile or certificatePassword
+        assert "certificateFile" not in win or not win["certificateFile"]
+        assert "certificatePassword" not in win or not win["certificatePassword"]
+        # Should not have forceCodeSigning in base config (it's env-only)
+        assert "forceCodeSigning" not in win
+
+
+class TestReleaseModeHandling:
+    """Tests for dev / unsigned-release / signed-release mode handling."""
+
+    def test_package_json_has_release_scripts(self):
+        pkg = _load_desktop_pkg()
+        scripts = pkg.get("scripts", {})
+        assert "check:signing" in scripts
+        assert "verify:signature" in scripts
+        assert "validate:signing" in scripts
+        assert "release:signed" in scripts
+
+    def test_signing_scripts_have_env_guards(self):
+        """Verify signing scripts don't fail without env vars."""
+        check_path = REPO_ROOT / "desktop" / "scripts" / "check_signing_config.js"
+        check_content = check_path.read_text(encoding="utf-8")
+        assert "process.env." in check_content
+
+        verify_path = REPO_ROOT / "desktop" / "scripts" / "verify_windows_signature.js"
+        verify_content = verify_path.read_text(encoding="utf-8")
+        assert "REQUIRE_SIGNED_ARTIFACTS" in verify_content

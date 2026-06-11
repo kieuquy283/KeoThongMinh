@@ -18,7 +18,11 @@
     "validate:artifacts": "node scripts/validate_release_artifacts.js",
     "validate:all": "node scripts/validate_release_artifacts.js",
     "check:updates": "node scripts/check_update_metadata.js",
-    "prepare:release": "node scripts/prepare_release.js"
+    "prepare:release": "node scripts/prepare_release.js",
+    "check:signing": "node scripts/check_signing_config.js",
+    "verify:signature": "node scripts/verify_windows_signature.js",
+    "release:signed": "cross-env RELEASE_MODE=signed-release FORCE_CODE_SIGNING=true npm run build",
+    "validate:signing": "node scripts/check_signing_config.js && node scripts/verify_windows_signature.js"
   },
   "build": {
     "appId": "com.keobot.desktop",

@@ -624,3 +624,94 @@ A "Diagnostics & About" section is available in the Settings panel:
 | `frontend/src/components/SettingsPanel.tsx` | Added publish provider, update channel, backend version to diagnostics; dynamic update status message |
 | `backend/tests/test_distribution.py` | New — 5 test classes for publish config, metadata, updater state, artifacts, workflow |
 | `docs/RELEASE_CHECKLIST.md` | Updated with workflow steps, required secrets, SmartScreen warning, update metadata |
+
+## v1.5 — Code Signing & Windows Trust Preparation
+
+### Signing Overview
+
+KeoBot can be built in three signing modes:
+
+| Mode | Description | Env vars required |
+|------|-------------|-------------------|
+| `dev` | Local development — unsigned, no signing config needed | None |
+| `unsigned-release` | CI release without signing — works, SmartScreen warns | None (default) |
+| `signed-release` | CI release with Authenticode signing | `CSC_LINK` + `CSC_KEY_PASSWORD` or Azure vars |
+
+### Signing Environment Variables
+
+**PFX certificate (traditional):**
+- `CSC_LINK` — path or base64-encoded PFX file (cross-platform)
+- `CSC_KEY_PASSWORD` — PFX password
+- `WIN_CSC_LINK` — Windows-specific PFX override
+- `WIN_CSC_KEY_PASSWORD` — Windows-specific PFX password
+
+**Azure Trusted Signing:**
+- `AZURE_TENANT_ID` — Azure AD tenant ID
+- `AZURE_CLIENT_ID` — Azure AD app registration client ID
+- `AZURE_CLIENT_SECRET` — client secret
+- `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME` — Trusted Signing account name
+- `AZURE_TRUSTED_SIGNING_CERT_PROFILE_NAME` — certificate profile name
+- `AZURE_TRUSTED_SIGNING_ENDPOINT` — regional endpoint (optional)
+
+**Mode control:**
+- `RELEASE_MODE` — `dev`, `unsigned-release`, or `signed-release`
+- `FORCE_CODE_SIGNING` — `true`/`false`; fails build if signing not available
+- `REQUIRE_SIGNED_ARTIFACTS` — `true`/`false`; fails verification if artifacts unsigned
+
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `npm run check:signing` | Detects signing env vars safely (no secrets printed) |
+| `npm run verify:signature` | Checks Authenticode signature on Windows using `Get-AuthenticodeSignature` |
+| `npm run validate:signing` | Runs both check + verify |
+| `npm run release:signed` | Build with `FORCE_CODE_SIGNING=true` |
+| `npm run validate:artifacts` | Now also checks: cert files, signing secrets, .env in packaged resources, signing config |
+
+### Signature Verification
+
+- On Windows, uses PowerShell `Get-AuthenticodeSignature` to verify installer/portable exes
+- Reports: `SIGNED`, `NOT SIGNED`, or `VERIFIER NOT AVAILABLE`
+- Does **not** fail unsigned dev builds by default
+- Fails only when `REQUIRE_SIGNED_ARTIFACTS=true`
+- Safe to run cross-platform (gracefully reports verifier unavailable)
+
+### Diagnostics
+
+- Settings → Diagnostics & About now shows:
+  - **Release mode**: `dev`, `unsigned-release`, or `signed-release`
+  - **Signed build**: `Yes`/`No` (detected from signing env vars)
+- Certificate details are never exposed
+
+### GitHub Actions Changes
+
+- New workflow input: `signed` (boolean, default false)
+- When `signed=true`: sets `FORCE_CODE_SIGNING=true`, passes signing secrets, runs signature verification
+- When `signed=false`: builds unsigned, skips verification
+- Signing secrets read from GitHub Secrets — never logged or committed
+- New step: `Check signing config` (runs before build)
+- New step: `Verify Windows signatures` (runs after signed build)
+
+### SmartScreen
+
+- Signing with a valid OV/EV code signing certificate improves trust
+- SmartScreen reputation still requires time and download volume — signing alone is not instant trust
+- Certificate files must **never** be committed to the repository
+- See `docs/RELEASE_CHECKLIST.md` for the full signing/release process
+
+### Files Changed (v1.5)
+
+| File | Change |
+|---|---|
+| `desktop/package.json` | Added `check:signing`, `verify:signature`, `release:signed`, `validate:signing` scripts |
+| `desktop/main.js` | Added `hasSigningConfig()`, `signedBuild`, `releaseMode` to `getAppInfo` IPC |
+| `desktop/scripts/check_signing_config.js` | New — safe signing env detection (no secrets printed) |
+| `desktop/scripts/verify_windows_signature.js` | New — Authenticode verification using PowerShell |
+| `desktop/scripts/validate_release_artifacts.js` | Extended: cert file scan, signing secret leak scan, .env in packaged resources, signing config check |
+| `.github/workflows/release.yml` | Added `signed` input, signing config check, signed/unsigned build branches, signature verification |
+| `frontend/src/desktop.d.ts` | Added `releaseMode`, `signedBuild` to `getAppInfo` type |
+| `frontend/src/components/SettingsPanel.tsx` | Added release mode and signed build status to diagnostics |
+| `README.md` | Added v1.5 code signing section |
+| `desktop/README.md` | Added signing overview, env vars, scripts |
+| `docs/RELEASE_CHECKLIST.md` | Added signing section, code signing options, verification steps |
+| `backend/tests/test_distribution.py` | Updated: signing config tests |
