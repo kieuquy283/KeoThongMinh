@@ -12,7 +12,7 @@ def app_module(monkeypatch, tmp_path):
     monkeypatch.setenv("STT_PROVIDER", "mock")
     monkeypatch.setenv("LLM_PROVIDER", "local")
     monkeypatch.setenv("TTS_PROVIDER", "edge_tts")
-    monkeypatch.setenv("MOCK_STT_TEXT", "KeoBot oi, ban la ai?")
+    monkeypatch.setenv("MOCK_STT_TEXT", "Kẹo Thông Minh oi, ban la ai?")
     monkeypatch.setenv("BACKEND_PORT", "8000")
     monkeypatch.setenv("KEOBOT_DATA_DIR", str(tmp_path / "data"))
 

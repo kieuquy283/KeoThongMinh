@@ -5,7 +5,11 @@ export type Emotion =
   | "sad"
   | "surprised"
   | "angry"
-  | "wink";
+  | "wink"
+  | "celebrate"
+  | "sleepy"
+  | "calm"
+  | "confused";
 
 export type ChatAction = "reminder_created" | "tool_response" | "memory_updated" | "memory_deleted";
 export type ToolUsed = "weather" | "time" | "currency" | "news_search" | "general_search" | "none";
@@ -104,6 +108,7 @@ export interface ConversationState {
   userText: string;
   botText: string;
   emotion: Emotion;
+  action: ChatAction | null;
   audioUrl: string;
   toolUsed: ToolUsed;
   toolResult: Record<string, unknown> | null;
@@ -118,6 +123,14 @@ export interface KeoBotSettings {
   WAKE_WORD_ENABLED: boolean;
   WAKE_WORD_PHRASES: string[];
   WAKE_WORD_MODE: "local_stt";
+  WAKE_WORD_ENGINE: "local" | "web_speech" | "hotkey_only";
+  LOCAL_WAKE_WORD_ENABLED: boolean;
+  PICOVOICE_ACCESS_KEY: string;
+  PORCUPINE_KEYWORD_PATH: string;
+  LOCAL_WAKE_SENSITIVITY: number;
+  HOTKEY_ENABLED: boolean;
+  HOTKEY_VALUE: string;
+  HANDSFREE_AUTO_RETURN_TO_WAKE_MODE: boolean;
   START_WITH_WINDOWS: boolean;
   BACKGROUND_ASSISTANT_ENABLED: boolean;
   OPENAI_API_KEY: string;
@@ -138,6 +151,7 @@ export type WakeWordStatus =
   | "wake_word_detected"
   | "handoff_to_listening"
   | "unsupported"
+  | "unavailable"
   | "error";
 
 export interface WakeWordState {

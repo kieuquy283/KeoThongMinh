@@ -64,4 +64,14 @@ contextBridge.exposeInMainWorld("keobotDesktop", {
       ipcRenderer.removeListener("keobot:reminderDue", handler);
     };
   },
+  startLocalWakeWord: () => ipcRenderer.invoke("localWakeWord:start"),
+  stopLocalWakeWord: () => ipcRenderer.invoke("localWakeWord:stop"),
+  getLocalWakeWordStatus: () => ipcRenderer.invoke("localWakeWord:getStatus"),
+  onLocalWakeWordStatusChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("localWakeWord:statusChanged", handler);
+    return () => {
+      ipcRenderer.removeListener("localWakeWord:statusChanged", handler);
+    };
+  },
 });

@@ -7,4 +7,4 @@ def test_health_endpoint(client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ok"
-    assert payload["service"] == "KeoBot Voice Pipeline"
+    assert payload["service"] == "Kẹo Thông Minh Voice Pipeline"

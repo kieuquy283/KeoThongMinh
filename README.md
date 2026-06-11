@@ -1,6 +1,6 @@
-# KeoBot Voice Pipeline
+# Kẹo Thông Minh Voice Pipeline
 
-KeoBot is a Vietnamese voice assistant MVP. The current phase adds a near-realtime conversation loop on top of the existing request/response voice pipeline.
+Kẹo Thông Minh is a Vietnamese voice assistant MVP. The current phase adds a near-realtime conversation loop on top of the existing request/response voice pipeline.
 
 ## Overview
 
@@ -9,7 +9,7 @@ Core flow:
 1. Browser records Vietnamese audio with `MediaRecorder`.
 2. Frontend uploads the audio to the FastAPI backend.
 3. Backend transcribes audio into text.
-4. LLM generates a KeoBot persona response.
+4. LLM generates a Kẹo Thông Minh persona response.
 5. TTS synthesizes Vietnamese speech as `.mp3`.
 6. Browser plays the returned audio URL.
 
@@ -19,7 +19,7 @@ Near-realtime conversation flow:
 2. Frontend opens the microphone and starts listening.
 3. Silence detection watches microphone RMS volume in the browser.
 4. When speech is detected and then silence lasts long enough, the current turn is sent to `/voice-chat`.
-5. KeoBot plays the returned audio reply.
+5. Kẹo Thông Minh plays the returned audio reply.
 6. After playback ends, the frontend returns to listening automatically if auto mode is still enabled.
 
 ## Current Structure
@@ -27,9 +27,63 @@ Near-realtime conversation flow:
 - `backend/` FastAPI app, providers, service orchestration, tests, validation scripts
 - `frontend/` React + Vite UI, recorder, chat panel, audio playback, silence detection
 - `desktop/` Electron shell and packaged app validation
-- `references/` KeoBot character reference images
+- `frontend/public/keobot/` canonical 2D mascot PNG assets used by the renderer
+- `references/` Kẹo Thông Minh character reference images
 - `character_bible.md` persona and visual guidance
 - `KEOBOT_VOICE_PIPELINE_TASK.md` original implementation task
+
+## 2D Mascot System
+
+This phase integrates a 2D image-based KeoBot mascot system for the desktop UI.
+
+- Asset location: `frontend/public/keobot/`
+- Rendering mode: React + CSS only
+- Not included in this phase: Live2D, VRM, GLB/3D avatar rendering, lip-sync engine
+
+Canonical asset names:
+
+- `keobot_idle.png`
+- `keobot_listening.png`
+- `keobot_thinking.png`
+- `keobot_speaking_1.png`
+- `keobot_speaking_2.png`
+- `keobot_speaking_3.png`
+- `keobot_happy.png`
+- `keobot_error.png`
+- `keobot_reminder.png`
+- `keobot_blink_1.png`
+- `keobot_blink_2.png`
+- `keobot_wave.png`
+- `keobot_celebrate.png`
+- `keobot_thinking_alt.png`
+- `keobot_loading.png`
+- `keobot_goodbye.png`
+- `keobot_confused.png`
+- `keobot_sad.png`
+- `keobot_sleepy.png`
+- `keobot_surprised_alt.png`
+- `keobot_processing.png`
+- `keobot_calm.png`
+
+State mapping summary:
+
+- `idle` -> idle/calm art with breathing and blink
+- `listening` -> listening art with attention pulse
+- `thinking` -> thinking or thinking-alt art with dot indicator
+- `speaking` -> `keobot_speaking_1..3.png` frame loop
+- `loading` -> loading or processing art with status dots
+- `reminder` -> reminder art with friendly pulse
+- `error` -> error or sad art with soft shake
+- special emotions -> happy, celebrate, confused, sleepy, calm, surprised
+
+Fallback behavior:
+
+- missing speaking frames fall back to `keobot_speaking_1.png` then idle
+- missing `thinking_alt` falls back to thinking
+- missing loading art falls back to processing, then thinking
+- missing celebrate art falls back to happy
+- missing sad art falls back to error
+- missing calm art falls back to idle
 
 ## Backend Setup
 
@@ -56,18 +110,18 @@ Frontend defaults to `http://127.0.0.1:8000`. Override with `VITE_API_BASE_URL` 
 
 - Click to start recording.
 - Click again to stop and send audio.
-- KeoBot replies after the backend finishes the full request/response turn.
+- Kẹo Thông Minh replies after the backend finishes the full request/response turn.
 
 ### Auto conversation mode
 
 - Turn on auto conversation in the recorder UI.
 - The frontend keeps the microphone open.
 - A turn is auto-submitted after speech ends and silence lasts long enough.
-- After KeoBot finishes speaking, the app returns to listening automatically.
+- After Kẹo Thông Minh finishes speaking, the app returns to listening automatically.
 
 ## Real-world Information Tools
 
-KeoBot now supports tool-assisted answers for real-world questions:
+Kẹo Thông Minh now supports tool-assisted answers for real-world questions:
 
 - `time`: current time in supported timezones
 - `currency`: exchange-rate lookup with clear demo fallback when live provider is not configured
@@ -98,7 +152,7 @@ Do not fabricate current weather, news, or live rates when a provider is not con
 
 ## Lightweight Local Memory v0.9.0
 
-KeoBot also supports a small local-only memory layer for simple preferences:
+Kẹo Thông Minh also supports a small local-only memory layer for simple preferences:
 
 - `user_name`
 - `preferred_form_of_address`
@@ -118,7 +172,7 @@ Memory endpoints:
 - `DELETE /memory/{key}`
 - `DELETE /memory`
 
-Memory commands must be explicit. KeoBot does not silently capture sensitive data.
+Memory commands must be explicit. Kẹo Thông Minh does not silently capture sensitive data.
 
 ## Silence Detection
 
@@ -134,34 +188,51 @@ Default frontend silence detection settings:
 
 These values are frontend-side only and can be tuned for different microphones or room noise.
 
-## Hands-free Assistant v0.9.0
+## Hands-free Assistant v1.0
 
-KeoBot now supports a background desktop foundation for hands-free use:
+Kẹo Thông Minh now supports a complete hands-free desktop experience:
 
-- System tray keeps the app running after the window is closed.
-- Global hotkey `Ctrl+Shift+K` starts listening.
-- Global hotkey `Ctrl+Shift+L` stops listening.
-- The tray menu can show the window, start/stop listening, open Settings, or quit fully.
-- Reminders still poll while minimized to tray and show native notifications.
+- **System tray** keeps the app running after the window is closed.
+- **Global hotkey** (default `Ctrl+Shift+K`) starts listening; works even while the window is hidden.
+- **Wake word** (`Kẹo Thông Minh ơi`, `này Kẹo Thông Minh`, `hey Kẹo Thông Minh`) runs locally via the Web Speech API.
+- **Auto return to wake mode** after a response finishes (configurable).
+- **Hotkey can be disabled** in Settings if not needed.
+- **Tray menu**: Show Kẹo Thông Minh, Start Listening, Toggle Wake Word, Open Settings, Quit.
+- **Background mode**: closing/minimizing hides to tray instead of quitting.
+- **Start with Windows**: optional login-item registration in Settings.
+- **Reminders** still poll while minimized and show native notifications.
+- **Privacy**: Wake word listens locally. Audio is sent to the backend only after activation.
 
-Wake Word MVP:
+### Wake Word MVP
 
-- Wake phrases: `KeoBot ơi`, `này KeoBot`, `hey KeoBot`
-- Wake word runs locally in the desktop frontend when the environment supports the Web Speech API.
-- Audio is not sent to the backend until wake word activation starts a command turn.
-- If wake word is unsupported, use the hotkey fallback.
+- Phrases: `Kẹo Thông Minh ơi`, `này Kẹo Thông Minh`, `hey Kẹo Thông Minh` (configurable).
+- Runs in the frontend renderer using the Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`).
+- Only starts a voice-command turn after a phrase is matched.
+- If the Web Speech API is unavailable, the mascot shows a clear fallback message:
+  > "Wake word is not supported in this environment. Use Ctrl+Shift+K instead."
+- The global hotkey always works as a fallback, even when wake word is unsupported.
 
-Start with Windows:
+### Settings (new in v1.0)
 
-- KeoBot can optionally register itself to open at login from Settings.
-- The toggle is saved locally in `%APPDATA%/KeoBot/config.json`.
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `WAKE_WORD_ENABLED` | `false` | Enable/disable wake word listening |
+| `WAKE_WORD_PHRASES` | `Kẹo Thông Minh ơi, này Kẹo Thông Minh, hey Kẹo Thông Minh` | Wake phrases (one per line) |
+| `HOTKEY_ENABLED` | `true` | Enable/disable the global hotkey |
+| `HOTKEY_VALUE` | `Ctrl+Shift+K` | The hotkey accelerator (read-only) |
+| `HANDSFREE_AUTO_RETURN_TO_WAKE_MODE` | `true` | Auto-restart wake word after response |
+| `START_WITH_WINDOWS` | `false` | Register at Windows login (packaged only) |
+| `BACKGROUND_ASSISTANT_ENABLED` | `true` | Keep app in tray when window is closed |
 
-Known limitations:
+### Known Limitations
 
 - Wake word is an MVP, not a dedicated low-power wake-word engine.
 - The app must still be running in the background.
 - Microphone permission is still required.
-- The hotkey may conflict with other apps.
+- The hotkey may conflict with other apps if they use the same shortcut.
+- Wake word depends on the Web Speech API being available in the Electron renderer.
+- If no microphone is available, wake word falls back to the hotkey.
+- The backend remains request/response; there is no full realtime streaming interrupt.
 
 ## Mock / Local Mode
 
@@ -171,7 +242,7 @@ Use this mode for offline development and validation:
 STT_PROVIDER=mock
 LLM_PROVIDER=local
 TTS_PROVIDER=edge_tts
-MOCK_STT_TEXT=KeoBot oi, ban la ai?
+MOCK_STT_TEXT=Kẹo Thông Minh oi, ban la ai?
 ```
 
 This keeps the pipeline runnable without external API keys.
@@ -205,7 +276,7 @@ TAVILY_API_KEY=
 SERPAPI_API_KEY=
 ```
 
-Desktop users can also store weather and search provider settings in `%APPDATA%/KeoBot/config.json` through the Settings panel.
+Desktop users can also store weather and search provider settings in the existing `%APPDATA%/KeoBot/config.json` compatibility path through the Settings panel.
 
 Provider diagnostics:
 
@@ -218,7 +289,7 @@ Provider diagnostics:
 - Currency tool uses demo fallback with a visible `Demo rate, not live.` marker when no live provider is configured.
 - Weather tool returns `Weather provider not configured.` when unavailable.
 - Search/news tool returns `Search provider not configured.` when unavailable.
-- KeoBot should not invent current weather, exchange rates, or news when the required tool is not configured.
+- Kẹo Thông Minh should not invent current weather, exchange rates, or news when the required tool is not configured.
 
 ## How To Test Providers
 
@@ -233,7 +304,7 @@ Provider diagnostics:
 Important backend variables:
 
 ```env
-APP_NAME=KeoBot Voice Pipeline
+APP_NAME=Kẹo Thông Minh Voice Pipeline
 APP_ENV=development
 BACKEND_HOST=127.0.0.1
 BACKEND_PORT=8000
@@ -250,7 +321,7 @@ EDGE_TTS_VOICE=vi-VN-HoaiMyNeural
 EDGE_TTS_RATE=+0%
 EDGE_TTS_VOLUME=+0%
 MAX_UPLOAD_SIZE_MB=15
-MOCK_STT_TEXT=KeoBot oi, ban la ai?
+MOCK_STT_TEXT=Kẹo Thông Minh oi, ban la ai?
 CURRENCY_PROVIDER=none
 EXCHANGE_RATE_API_URL=
 EXCHANGE_RATE_API_KEY=
@@ -295,13 +366,14 @@ npm run smoke:packaged
 
 ## Known Limitations
 
-- No avatar, VRM, three-vrm, or lip-sync in this phase.
+- No Live2D, VRM, GLB/3D avatar rendering, or lip-sync engine in this phase.
+- The mascot is a 2D asset-driven state system, not a realtime facial rig.
 - No RAG or vector DB in this phase.
 - Memory is lightweight, local-only, and limited to explicit preferences.
 - Voice flow is still request/response, not full realtime streaming.
 - Auto conversation depends on browser `MediaRecorder`, microphone permission, and Web Audio API support.
 - Silence threshold is heuristic and may need tuning for different microphones or noisy rooms.
-- There is no wake word yet.
+- Wake word relies on the Web Speech API being available in the Electron renderer.
 - Interrupt only stops local playback or aborts the current request before the backend replies; there is no backend streaming interrupt.
 - Weather and search need provider configuration before they can answer real-world queries.
 - Currency can fall back to demo values, so the response must be treated as non-live unless a provider is configured.
@@ -316,14 +388,14 @@ The desktop release uses a backend `onedir` layout for faster, more deterministi
 
 ## Desktop Settings
 
-Settings are stored locally at `%APPDATA%/KeoBot/config.json`.
+Settings are stored locally at the existing `%APPDATA%/KeoBot/config.json` compatibility path.
 Memory is stored separately in the backend data directory, usually `KEOBOT_DATA_DIR/memory.sqlite3`.
 
 - API keys are never committed.
 - API keys are never bundled into the app.
 - Mock/local mode can be used for demos without keys.
 - Live providers require OpenAI or Gemini/Google keys in the desktop settings.
-- After changing settings, restart KeoBot to apply them if backend restart is not exposed.
+- After changing settings, restart Kẹo Thông Minh to apply them if backend restart is not exposed.
 - If you see a provider key missing error, verify the key in Settings and save again.
 - Memory values are not part of Settings and should not contain secrets.
 
@@ -392,8 +464,8 @@ npm run smoke:packaged
 
 ### Release artifacts to share
 
-- `release/KeoBot-Portable-v0.3.0.exe`
-- `release/KeoBot-Setup-v0.3.0.exe`
+- `release/KeoThongMinh-Portable-v0.3.0.exe`
+- `release/KeoThongMinh-Setup-v0.3.0.exe`
 
 ### Notes
 
@@ -409,7 +481,7 @@ npm run smoke:packaged
 
 - Reminder data is stored locally in SQLite.
 - The desktop app polls due reminders every 20 seconds by default.
-- Desktop notifications only appear while KeoBot is open.
+- Desktop notifications only appear while Kẹo Thông Minh is open.
 - Reminder data is local-only and does not sync to cloud services.
 
 ### Reminder quick test
@@ -426,19 +498,19 @@ npm run smoke:packaged
 3. Click `Bat dau tro chuyen`.
 4. Speak one short sentence.
 5. Stay silent for about 1 second.
-6. Confirm the app sends audio automatically, plays KeoBot's reply, and returns to listening.
+6. Confirm the app sends audio automatically, plays Kẹo Thông Minh's reply, and returns to listening.
 
 ## Real-world Tools Quick Test
 
 1. Ask `Bay gio la may gio o Nhat?`
 2. Ask `Ty gia USD sang VND hom nay?`
-3. Ask `Thoi tiet Ha Noi hom nay the nao?` without weather API key and confirm KeoBot says the tool is not configured.
-4. Ask `Tin AI moi nhat co gi?` without search API key and confirm KeoBot says the tool is not configured.
+3. Ask `Thoi tiet Ha Noi hom nay the nao?` without weather API key and confirm Kẹo Thông Minh says the tool is not configured.
+4. Ask `Tin AI moi nhat co gi?` without search API key and confirm Kẹo Thông Minh says the tool is not configured.
 
 ## Memory Quick Test
 
 1. Say `Tu gio goi minh la Quy`.
-2. Ask a normal question and confirm KeoBot uses the remembered name.
+2. Ask a normal question and confirm Kẹo Thông Minh uses the remembered name.
 3. Say `Nho rang thanh pho mac dinh cua minh la Ha Noi`.
 4. Ask `Thoi tiet hom nay the nao?` and confirm the backend applies the remembered city as its default.
 5. Say `Xoa thanh pho mac dinh cua minh`.

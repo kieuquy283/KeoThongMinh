@@ -18,11 +18,15 @@ declare global {
       onStopListening: (callback: () => void) => () => void;
       onOpenSettings: (callback: () => void) => () => void;
       onSettingsChanged: (
-        callback: (settings: Pick<KeoBotSettings, "WAKE_WORD_ENABLED" | "WAKE_WORD_PHRASES" | "START_WITH_WINDOWS" | "BACKGROUND_ASSISTANT_ENABLED">) => void,
+        callback: (settings: Pick<KeoBotSettings, "WAKE_WORD_ENABLED" | "WAKE_WORD_PHRASES" | "WAKE_WORD_ENGINE" | "LOCAL_WAKE_WORD_ENABLED" | "PICOVOICE_ACCESS_KEY" | "PORCUPINE_KEYWORD_PATH" | "LOCAL_WAKE_SENSITIVITY" | "HOTKEY_ENABLED" | "HOTKEY_VALUE" | "HANDSFREE_AUTO_RETURN_TO_WAKE_MODE" | "START_WITH_WINDOWS" | "BACKGROUND_ASSISTANT_ENABLED">) => void,
       ) => () => void;
       onWakeWordDetected: (callback: (phrase: string) => void) => () => void;
       onWakeWordStatus: (callback: (status: WakeWordState) => void) => () => void;
       onReminderDue: (callback: (reminder: KeoBotReminder) => void) => () => void;
+      startLocalWakeWord: () => Promise<{ ok: boolean; error?: string }>;
+      stopLocalWakeWord: () => Promise<{ ok: boolean }>;
+      getLocalWakeWordStatus: () => Promise<WakeWordState>;
+      onLocalWakeWordStatusChanged: (callback: (status: WakeWordState) => void) => () => void;
     };
   }
 }

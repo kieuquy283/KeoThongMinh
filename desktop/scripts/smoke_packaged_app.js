@@ -11,8 +11,8 @@ const frontendIndex = path.join(repoRoot, "frontend", "dist", "index.html");
 const releaseDir = path.join(repoRoot, "release");
 const packageJson = JSON.parse(fs.readFileSync(path.join(desktopRoot, "package.json"), "utf8"));
 const expectedArtifacts = [
-  path.join(releaseDir, `KeoBot-Portable-v${packageJson.version}.exe`),
-  path.join(releaseDir, `KeoBot-Setup-v${packageJson.version}.exe`),
+  path.join(releaseDir, `KeoThongMinh-Portable-v${packageJson.version}.exe`),
+  path.join(releaseDir, `KeoThongMinh-Setup-v${packageJson.version}.exe`),
 ];
 const backendCandidates = [
   path.join(releaseDir, "win-unpacked", "resources", "backend", "keobot_backend", "keobot_backend.exe"),

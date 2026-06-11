@@ -73,9 +73,9 @@ export function ChatPanel({
         </article>
 
         <article className="chat-bubble">
-          <p className="chat-label">KeoBot</p>
+          <p className="chat-label">Kẹo Thông Minh</p>
           <p className={`chat-text ${botText ? "" : "chat-empty"}`}>
-            {botText || "Cau tra loi cua KeoBot se xuat hien o day."}
+            {botText || "Câu trả lời của Kẹo Thông Minh sẽ xuất hiện ở đây."}
           </p>
         </article>
 

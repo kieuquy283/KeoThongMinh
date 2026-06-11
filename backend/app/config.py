@@ -39,7 +39,7 @@ def _get_data_dir() -> Path:
 
 
 class Settings:
-    app_name: str = get_env("APP_NAME", "KeoBot Voice Pipeline") or "KeoBot Voice Pipeline"
+    app_name: str = get_env("APP_NAME", "Kẹo Thông Minh Voice Pipeline") or "Kẹo Thông Minh Voice Pipeline"
     app_env: str = get_env("APP_ENV", "development") or "development"
     backend_host: str = get_env("BACKEND_HOST", "127.0.0.1") or "127.0.0.1"
     backend_port: int = int(get_env("BACKEND_PORT", "8000") or "8000")
@@ -72,7 +72,7 @@ class Settings:
     edge_tts_volume: str = get_env("EDGE_TTS_VOLUME", "+0%") or "+0%"
 
     max_upload_size_mb: int = int(get_env("MAX_UPLOAD_SIZE_MB", "15") or "15")
-    mock_stt_text: str = get_env("MOCK_STT_TEXT", "KeoBot oi, ban la ai?") or "KeoBot oi, ban la ai?"
+    mock_stt_text: str = get_env("MOCK_STT_TEXT", "Kẹo Thông Minh oi, ban la ai?") or "Kẹo Thông Minh oi, ban la ai?"
 
 
 @lru_cache(maxsize=1)

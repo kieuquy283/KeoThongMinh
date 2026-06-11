@@ -12,7 +12,7 @@ async def _fake_synthesize_speech(text: str, output_path: str) -> str:
 async def _fake_transcribe_audio(file_path: str) -> str:
     if Path(file_path).stat().st_size == 0:
         raise ValueError("Khong nhan dien duoc giong noi.")
-    return "KeoBot oi, ban la ai?"
+    return "Kẹo Thông Minh oi, ban la ai?"
 
 
 def test_voice_chat_requires_audio_file(client):

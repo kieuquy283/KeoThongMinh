@@ -9,6 +9,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { VoiceRecorder, type VoiceRecorderHandle } from "./components/VoiceRecorder";
 import { useWakeWord } from "./hooks/useWakeWord";
 import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
+import { mapAppStateToMascot } from "./utils/keobotMascotState";
 import type {
   AutoConversationStatus,
   ConversationMode,
@@ -24,6 +25,7 @@ const INITIAL_CONVERSATION: ConversationState = {
   userText: "",
   botText: "",
   emotion: "neutral",
+  action: null,
   audioUrl: "",
   toolUsed: "none",
   toolResult: null,
@@ -35,8 +37,8 @@ const STATUS_LABELS: Record<VoiceStatus, string> = {
   idle: "Sẵn sàng",
   recording: "Đang nghe...",
   uploading: "Đang tải lên...",
-  thinking: "KeoBot đang suy nghĩ...",
-  speaking: "KeoBot đang trả lời...",
+  thinking: "Kẹo Thông Minh đang suy nghĩ...",
+  speaking: "Kẹo Thông Minh đang trả lời...",
   error: "Có lỗi",
 };
 
@@ -44,18 +46,19 @@ const STATUS_MESSAGES: Record<VoiceStatus, string> = {
   idle: "Sẵn sàng để nghe câu hỏi tiếp theo.",
   recording: "Đang nghe...",
   uploading: "Đang tải audio lên backend...",
-  thinking: "KeoBot đang suy nghĩ...",
-  speaking: "KeoBot đang trả lời...",
+  thinking: "Kẹo Thông Minh đang suy nghĩ...",
+  speaking: "Kẹo Thông Minh đang trả lời...",
   error: "Có lỗi. Hãy kiểm tra lại microphone hoặc backend.",
 };
 
 const WAKE_WORD_LABELS: Record<WakeWordStatus, string> = {
   off: "Off",
   starting: "Starting...",
-  listening_for_wake_word: 'Listening for "KeoBot ơi"',
+  listening_for_wake_word: 'Listening for "Kẹo Thông Minh ơi"',
   wake_word_detected: "Detected",
   handoff_to_listening: "Handing off...",
   unsupported: "Unsupported",
+  unavailable: "Unavailable",
   error: "Error",
 };
 
@@ -87,6 +90,7 @@ export default function App() {
   const wakeWord = useWakeWord({
     enabled: wakeWordEnabled,
     phrases: desktopSettings.WAKE_WORD_PHRASES,
+    engine: desktopSettings.WAKE_WORD_ENGINE,
   });
 
   const loadReminders = async () => {
@@ -147,7 +151,7 @@ export default function App() {
 
     const unsubscribe = window.keobotDesktop.onWakeWordDetected((phrase) => {
       wakeWordCommandPendingRef.current = true;
-      setHandsfreeMessage(phrase ? `KeoBot đã nghe bạn gọi: ${phrase}` : "KeoBot đã nghe bạn gọi.");
+      setHandsfreeMessage(phrase ? `Kẹo Thông Minh đã nghe bạn gọi: ${phrase}` : "Kẹo Thông Minh đã nghe bạn gọi.");
     });
 
     return () => {
@@ -189,7 +193,7 @@ export default function App() {
       }
 
       if (isWakeWordTurn) {
-        setHandsfreeMessage("KeoBot đã nghe bạn gọi.");
+        setHandsfreeMessage("Kẹo Thông Minh đã nghe bạn gọi.");
       } else {
         setHandsfreeMessage("Hands-free listening activated. Press Ctrl+Shift+K again or Stop to cancel.");
       }
@@ -235,7 +239,7 @@ export default function App() {
 
   useEffect(() => {
     if (!wakeWord.enabled) {
-      if (handsfreeMessage?.includes("Wake word") || handsfreeMessage?.includes("KeoBot đã nghe bạn gọi")) {
+      if (handsfreeMessage?.includes("Wake word") || handsfreeMessage?.includes("Kẹo Thông Minh đã nghe bạn gọi")) {
         setHandsfreeMessage(null);
       }
       return;
@@ -244,20 +248,25 @@ export default function App() {
     if (wakeWord.status === "wake_word_detected") {
       wakeWordCommandPendingRef.current = true;
       setHandsfreeMessage(
-        wakeWord.lastDetectedPhrase ? `KeoBot đã nghe bạn gọi: ${wakeWord.lastDetectedPhrase}` : "KeoBot đã nghe bạn gọi.",
+        wakeWord.lastDetectedPhrase ? `Kẹo Thông Minh đã nghe bạn gọi: ${wakeWord.lastDetectedPhrase}` : "Kẹo Thông Minh đã nghe bạn gọi.",
       );
       return;
     }
 
     if (wakeWord.status === "listening_for_wake_word") {
       setHandsfreeMessage(
-        `Wake word: đang lắng nghe "${desktopSettings.WAKE_WORD_PHRASES[0] ?? "KeoBot ơi"}".`,
+        `Wake word: đang lắng nghe "${desktopSettings.WAKE_WORD_PHRASES[0] ?? "Kẹo Thông Minh ơi"}".`,
       );
       return;
     }
 
     if (wakeWord.status === "unsupported") {
       setHandsfreeMessage("Wake word is not supported in this environment. Use Ctrl+Shift+K instead.");
+      return;
+    }
+
+    if (wakeWord.status === "unavailable") {
+      setHandsfreeMessage("Local wake word engine is not available. Use Ctrl+Shift+K or switch to Web Speech engine.");
       return;
     }
 
@@ -287,7 +296,7 @@ export default function App() {
     audioRef.current = audio;
     audio.onended = () => {
       setStatus("idle");
-      if (wakeWord.enabled && wakeWord.supported) {
+      if (wakeWord.enabled && wakeWord.supported && desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE) {
         wakeWord.startWakeWord();
       }
     };
@@ -330,6 +339,7 @@ export default function App() {
       userText: response.user_text,
       botText: response.bot_text,
       emotion: response.emotion,
+      action: response.action ?? null,
       audioUrl: response.audio_url,
       toolUsed: response.tool_used ?? "none",
       toolResult: response.tool_result ?? null,
@@ -363,31 +373,17 @@ export default function App() {
 
   const statusMessage = error && status === "error" ? error : STATUS_MESSAGES[status];
   const providerSnapshot = desktopSettings ?? DEFAULT_SETTINGS;
-
-  let mascotStatus: "idle" | "listening" | "thinking" | "speaking" | "error" = "idle";
-  if (wakeWord.enabled && wakeWord.status === "error") {
-    mascotStatus = "error";
-  } else if (wakeWord.enabled && (wakeWord.status === "starting" || wakeWord.status === "listening_for_wake_word" || wakeWord.status === "wake_word_detected" || wakeWord.status === "handoff_to_listening")) {
-    mascotStatus = "listening";
-  } else if (conversationMode === "auto") {
-    if (autoStatus === "listening" || autoStatus === "speech_detected" || autoStatus === "silence_wait") {
-      mascotStatus = "listening";
-    } else if (autoStatus === "sending" || autoStatus === "thinking") {
-      mascotStatus = "thinking";
-    } else if (autoStatus === "speaking") {
-      mascotStatus = "speaking";
-    } else if (autoStatus === "error") {
-      mascotStatus = "error";
-    }
-  } else if (status === "recording") {
-    mascotStatus = "listening";
-  } else if (status === "uploading" || status === "thinking") {
-    mascotStatus = "thinking";
-  } else if (status === "speaking") {
-    mascotStatus = "speaking";
-  } else if (status === "error") {
-    mascotStatus = "error";
-  }
+  const mascotState = mapAppStateToMascot({
+    voiceStatus: status,
+    autoStatus,
+    conversationMode,
+    wakeWordEnabled: wakeWord.enabled,
+    wakeWordStatus: wakeWord.status,
+    hasError: Boolean(error),
+    hasDueReminder: Boolean(dueReminder),
+    latestAction: conversation.action,
+    emotion: conversation.emotion,
+  });
 
   return (
     <main className="app-shell">
@@ -397,8 +393,8 @@ export default function App() {
       <header className="hero">
         <div className="hero-topline">
           <div>
-            <p className="eyebrow">KeoBot Desktop v0.3.0</p>
-            <h1>Vietnamese voice assistant for the desktop.</h1>
+            <p className="eyebrow">Kẹo Thông Minh Desktop v0.3.0</p>
+            <h1>Trợ lý giọng nói tiếng Việt cho máy tính để bàn.</h1>
             <p className="hero-copy">
               Ghi âm, gửi lên backend, nhận câu trả lời và phát audio phản hồi trong một UI desktop gọn, rõ, dễ dùng.
             </p>
@@ -421,10 +417,12 @@ export default function App() {
           <span>STT: {providerSnapshot.STT_PROVIDER}</span>
           <span>LLM: {providerSnapshot.LLM_PROVIDER}</span>
           <span>TTS: {providerSnapshot.TTS_PROVIDER}</span>
-          <span>Wake word: {wakeWord.enabled ? "On" : "Off"}</span>
+          <span>Wake: {wakeWord.enabled ? "On" : "Off"}</span>
+          <span>Engine: {desktopSettings.WAKE_WORD_ENGINE}</span>
           <span>Wake status: {WAKE_WORD_LABELS[wakeWord.status]}</span>
           <span>Background: {desktopSettings.BACKGROUND_ASSISTANT_ENABLED ? "On" : "Off"}</span>
-          <span>Hotkey: Ctrl+Shift+K</span>
+          <span>Hotkey: {desktopSettings.HOTKEY_ENABLED ? desktopSettings.HOTKEY_VALUE : "Off"}</span>
+          <span>Auto wake: {desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE ? "On" : "Off"}</span>
           <span>Mode: {isDesktopMode ? "Desktop" : "Browser"}</span>
         </div>
       </header>
@@ -476,7 +474,7 @@ export default function App() {
       ) : null}
 
       <section className="grid">
-        <KeoBotMascot status={mascotStatus} emotion={conversation.emotion} />
+        <KeoBotMascot status={mascotState.status} emotion={mascotState.emotion} />
         <ChatPanel
           userText={conversation.userText}
           botText={conversation.botText}

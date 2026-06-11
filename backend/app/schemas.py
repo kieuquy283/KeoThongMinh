@@ -13,7 +13,7 @@ ToolUsed = Literal["weather", "time", "currency", "news_search", "general_search
 
 class HealthResponse(BaseModel):
     status: str = "ok"
-    service: str = "KeoBot Voice Pipeline"
+    service: str = "Kẹo Thông Minh Voice Pipeline"
 
 
 class TextChatRequest(BaseModel):

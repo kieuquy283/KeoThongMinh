@@ -30,7 +30,7 @@ const BUTTON_LABELS: Record<VoiceStatus, string> = {
   idle: "Bắt đầu nghe",
   recording: "Dừng nghe",
   uploading: "Đang tải lên...",
-  thinking: "KeoBot đang suy nghĩ...",
+  thinking: "Kẹo Thông Minh đang suy nghĩ...",
   speaking: "Đang phát...",
   error: "Ghi âm lại",
 };
@@ -41,8 +41,8 @@ const AUTO_STATUS_LABELS: Record<AutoConversationStatus, string> = {
   speech_detected: "Đã phát hiện giọng nói...",
   silence_wait: "Đang chờ bạn nói xong...",
   sending: "Đang gửi audio...",
-  thinking: "KeoBot đang suy nghĩ...",
-  speaking: "KeoBot đang trả lời...",
+  thinking: "Kẹo Thông Minh đang suy nghĩ...",
+  speaking: "Kẹo Thông Minh đang trả lời...",
   error: "Có lỗi trong auto conversation.",
 };
 
@@ -287,7 +287,7 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
         <h3>Điều khiển ghi âm</h3>
         <p>
           Manual mode hoạt động như cũ. Auto conversation sẽ tự nghe, tự phát hiện im lặng, tự gửi audio
-          và tự quay lại listening sau khi KeoBot trả lời xong.
+          và tự quay lại listening sau khi Kẹo Thông Minh trả lời xong.
         </p>
       </div>
 

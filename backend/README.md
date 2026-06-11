@@ -1,6 +1,6 @@
-# KeoBot Backend
+# Kẹo Thông Minh Backend
 
-FastAPI backend for the KeoBot voice pipeline MVP.
+FastAPI backend for the Kẹo Thông Minh voice pipeline MVP.
 
 ## Release v0.3.0
 
@@ -70,7 +70,7 @@ Known limitations:
 
 ## Desktop Settings
 
-Desktop settings are saved locally at `%APPDATA%/KeoBot/config.json`.
+Desktop settings are saved locally at the existing `%APPDATA%/KeoBot/config.json` compatibility path.
 
 - API keys are never committed.
 - API keys are never bundled into the app.
@@ -101,7 +101,7 @@ Use this configuration for offline development:
 STT_PROVIDER=mock
 LLM_PROVIDER=local
 TTS_PROVIDER=edge_tts
-MOCK_STT_TEXT=KeoBot oi, ban la ai?
+MOCK_STT_TEXT=Kẹo Thông Minh oi, ban la ai?
 ```
 
 ## Tests

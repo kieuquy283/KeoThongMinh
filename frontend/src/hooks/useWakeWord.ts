@@ -6,6 +6,7 @@ interface UseWakeWordOptions {
   enabled: boolean;
   phrases?: string[];
   language?: string;
+  engine?: "local" | "web_speech" | "hotkey_only";
 }
 
 interface UseWakeWordResult {
@@ -67,13 +68,17 @@ function findMatchedPhrase(transcript: string, phrases: string[]): string | null
   return null;
 }
 
-export function useWakeWord({ enabled, phrases = ["keobot oi", "nay keobot", "hey keobot"], language = "vi-VN" }: UseWakeWordOptions): UseWakeWordResult {
+function isDesktop(): boolean {
+  return typeof window !== "undefined" && Boolean(window.keobotDesktop?.isDesktop);
+}
+
+export function useWakeWord({ enabled, phrases = ["kẹo thông minh ơi", "này kẹo thông minh", "hey kẹo thông minh"], language = "vi-VN", engine = "web_speech" }: UseWakeWordOptions): UseWakeWordResult {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const activeRef = useRef(false);
   const stopRequestedRef = useRef(false);
   const phrasesRef = useRef(phrases);
-  const [supported, setSupported] = useState(Boolean(getSpeechRecognitionConstructor()));
-  const [status, setStatus] = useState<WakeWordStatus>(enabled ? "starting" : "off");
+  const [supported, setSupported] = useState(engine === "hotkey_only" ? false : engine === "local" ? true : Boolean(getSpeechRecognitionConstructor()));
+  const [status, setStatus] = useState<WakeWordStatus>(enabled && engine !== "hotkey_only" ? "starting" : "off");
   const [lastDetectedPhrase, setLastDetectedPhrase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,9 +90,41 @@ export function useWakeWord({ enabled, phrases = ["keobot oi", "nay keobot", "he
     void window.keobotDesktop.notifyWakeWordStatus(payload);
   }, []);
 
+  const stopLocalWakeWord = useCallback(async () => {
+    if (!isDesktop() || !window.keobotDesktop?.stopLocalWakeWord) {
+      return;
+    }
+
+    await window.keobotDesktop.stopLocalWakeWord();
+  }, []);
+
+  const startLocalWakeWord = useCallback(async () => {
+    if (!isDesktop() || !window.keobotDesktop?.startLocalWakeWord) {
+      setStatus("unavailable");
+      setError("Local wake word engine not available in this environment.");
+      return;
+    }
+
+    setStatus("starting");
+    notifyWakeWordStatus({ status: "starting", phrase: null });
+
+    const result = await window.keobotDesktop.startLocalWakeWord();
+    if (!result.ok) {
+      setStatus("unavailable");
+      setError(result.error ?? "Local wake word engine could not start.");
+    }
+  }, [notifyWakeWordStatus]);
+
   const stopWakeWord = useCallback(() => {
     stopRequestedRef.current = true;
     activeRef.current = false;
+
+    if (engine === "local") {
+      void stopLocalWakeWord();
+      setStatus("off");
+      notifyWakeWordStatus({ status: "off", phrase: null });
+      return;
+    }
 
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
@@ -102,11 +139,36 @@ export function useWakeWord({ enabled, phrases = ["keobot oi", "nay keobot", "he
       }
     }
 
-    setStatus(enabled ? "off" : "off");
+    setStatus("off");
     notifyWakeWordStatus({ status: "off", phrase: null });
-  }, [enabled, notifyWakeWordStatus]);
+  }, [engine, notifyWakeWordStatus, stopLocalWakeWord]);
 
   const startWakeWord = useCallback(() => {
+    if (engine === "hotkey_only") {
+      setSupported(false);
+      setStatus("off");
+      notifyWakeWordStatus({ status: "off", phrase: null });
+      return;
+    }
+
+    if (engine === "local") {
+      if (!enabled) {
+        stopWakeWord();
+        return;
+      }
+
+      if (activeRef.current) {
+        return;
+      }
+
+      setSupported(true);
+      setError(null);
+      setLastDetectedPhrase(null);
+      activeRef.current = true;
+      void startLocalWakeWord();
+      return;
+    }
+
     const Recognition = getSpeechRecognitionConstructor();
     if (!Recognition) {
       setSupported(false);
@@ -231,14 +293,14 @@ export function useWakeWord({ enabled, phrases = ["keobot oi", "nay keobot", "he
       setStatus("error");
       notifyWakeWordStatus({ status: "error", phrase: null });
     }
-  }, [enabled, language, notifyWakeWordStatus]);
+  }, [enabled, engine, language, notifyWakeWordStatus, stopWakeWord, startLocalWakeWord]);
 
   useEffect(() => {
     phrasesRef.current = phrases;
   }, [phrases]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || engine === "hotkey_only") {
       stopWakeWord();
       return;
     }
@@ -247,7 +309,53 @@ export function useWakeWord({ enabled, phrases = ["keobot oi", "nay keobot", "he
     return () => {
       stopWakeWord();
     };
-  }, [enabled, startWakeWord, stopWakeWord]);
+  }, [enabled, engine, startWakeWord, stopWakeWord]);
+
+  useEffect(() => {
+    if (!isDesktop() || !window.keobotDesktop?.onLocalWakeWordStatusChanged || engine !== "local") {
+      return;
+    }
+
+    const unsubscribe = window.keobotDesktop.onLocalWakeWordStatusChanged((payload) => {
+      if (payload.status === "wake_word_detected" && payload.phrase) {
+        setLastDetectedPhrase(payload.phrase);
+        setStatus("wake_word_detected");
+        notifyWakeWordStatus({ status: "wake_word_detected", phrase: payload.phrase });
+        return;
+      }
+
+      if (payload.status === "listening_for_wake_word") {
+        setStatus("listening_for_wake_word");
+        notifyWakeWordStatus({ status: "listening_for_wake_word", phrase: null });
+        return;
+      }
+
+      if (payload.status === "error") {
+        setStatus("error");
+        setError("Local wake word engine encountered an error.");
+        notifyWakeWordStatus({ status: "error", phrase: null });
+        return;
+      }
+
+      if (payload.status === "unavailable") {
+        setStatus("unavailable");
+        setError("Local wake word engine is not available.");
+        notifyWakeWordStatus({ status: "unavailable", phrase: null });
+        return;
+      }
+
+      if (payload.status === "off") {
+        activeRef.current = false;
+        setStatus("off");
+        notifyWakeWordStatus({ status: "off", phrase: null });
+        return;
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [engine, notifyWakeWordStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.keobotDesktop?.notifyWakeWordStatus) {

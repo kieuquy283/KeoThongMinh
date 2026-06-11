@@ -1,6 +1,6 @@
 {
   "name": "keobot-desktop",
-  "productName": "KeoBot",
+  "productName": "Kẹo Thông Minh",
   "version": "0.3.0",
   "private": true,
   "description": "Vietnamese speech-to-speech AI assistant desktop app.",
@@ -10,20 +10,25 @@
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
+    "postinstall": "electron-rebuild -f -w @picovoice/porcupine-node @picovoice/pvrecorder-node",
+    "rebuild": "electron-rebuild -f -w @picovoice/porcupine-node @picovoice/pvrecorder-node",
     "build": "electron-builder",
     "pack": "electron-builder --dir",
     "smoke:packaged": "node scripts/smoke_packaged_app.js"
   },
   "build": {
     "appId": "com.keobot.desktop",
-    "productName": "KeoBot",
+    "productName": "Kẹo Thông Minh",
     "directories": {
       "output": "../release"
     },
     "files": [
       "main.js",
       "preload.js",
+      "localWakeWord.js",
       "package.json",
+      "node_modules/@picovoice/**/*",
+      "node_modules/@picovoice/.package-lock.json",
       "../frontend/dist/**/*"
     ],
     "extraResources": [
@@ -36,10 +41,10 @@
       }
     ],
     "portable": {
-      "artifactName": "KeoBot-Portable-v${version}.${ext}"
+      "artifactName": "KeoThongMinh-Portable-v${version}.${ext}"
     },
     "nsis": {
-      "artifactName": "KeoBot-Setup-v${version}.${ext}",
+      "artifactName": "KeoThongMinh-Setup-v${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
@@ -58,5 +63,9 @@
     "electron": "^35.0.0",
     "electron-builder": "^26.0.12",
     "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "@picovoice/porcupine-node": "^4.0.2",
+    "@picovoice/pvrecorder-node": "^1.2.9"
   }
 }

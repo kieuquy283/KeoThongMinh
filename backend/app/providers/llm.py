@@ -17,7 +17,7 @@ ALLOWED_EMOTIONS: set[str] = {
     "wink",
 }
 
-SYSTEM_PROMPT = """Ban la KeoBot, mot tro ly AI tieng Viet than thien, thong minh va hoi hai huoc.
+SYSTEM_PROMPT = """Ban la Kẹo Thông Minh, mot tro ly AI tieng Viet than thien, thong minh va hoi hai huoc.
 Ban tra loi tu nhien, ngan gon, de hieu.
 Ban uu tien tieng Viet.
 Neu nguoi dung hoi hoc tap hoac ky thuat, hay giai thich tung buoc.
@@ -30,7 +30,7 @@ Ban phai tra ve JSON hop le theo format:
   "emotion": "neutral|happy|thinking|sad|surprised|angry|wink"
 }"""
 
-TOOL_SYSTEM_PROMPT = """Ban la KeoBot.
+TOOL_SYSTEM_PROMPT = """Ban la Kẹo Thông Minh.
 Ban chi duoc tom tat dua tren du lieu cong cu duoc cung cap.
 Khong duoc bo sung su that moi neu tool khong co trong du lieu.
 Neu du lieu la demo hoac fallback, phai noi ro dieu do.
@@ -93,10 +93,10 @@ def _local_keobot_response(user_text: str, memory_context: dict[str, Any] | None
     text = user_text.lower()
     if any(keyword in text for keyword in ["ban la ai", "ai vay", "gioi thieu", "gioi thieu ve ban"]):
         if user_name:
-            return {"bot_text": f"Minh la KeoBot, tro ly AI tieng Viet than thien cua {user_name}.", "emotion": "happy"}
-        return {"bot_text": "Minh la KeoBot, tro ly AI tieng Viet than thien cua ban.", "emotion": "happy"}
+            return {"bot_text": f"Minh la Kẹo Thông Minh, tro ly AI tieng Viet than thien cua {user_name}.", "emotion": "happy"}
+        return {"bot_text": "Minh la Kẹo Thông Minh, tro ly AI tieng Viet than thien cua ban.", "emotion": "happy"}
     if any(keyword in text for keyword in ["dua", "joke", "cau dua", "cuoi"]):
-        return {"bot_text": "Day nhe: KeoBot ma buon thi van phai... bat che do vui ve truoc da!", "emotion": "wink"}
+        return {"bot_text": "Day nhe: Kẹo Thông Minh ma buon thi van phai... bat che do vui ve truoc da!", "emotion": "wink"}
     if any(keyword in text for keyword in ["met", "buon", "chan", "stress", "duoi"]):
         return {"bot_text": "Nghe co ve ban dang met. Nghi mot chut roi minh tinh tiep nhe.", "emotion": "sad"}
     if any(keyword in text for keyword in ["giai thich", "la gi", "tai sao", "how", "roi sao"]):

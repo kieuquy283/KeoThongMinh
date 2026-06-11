@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const { ipcMain } = require("electron");
+const { createLocalWakeWordService } = require("./localWakeWord");
 
 const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, nativeImage } = require("electron");
 
@@ -20,6 +21,14 @@ const DEFAULT_SETTINGS = {
   WAKE_WORD_ENABLED: false,
   WAKE_WORD_PHRASES: ["keobot oi", "nay keobot", "hey keobot"],
   WAKE_WORD_MODE: "local_stt",
+  WAKE_WORD_ENGINE: "web_speech",
+  LOCAL_WAKE_WORD_ENABLED: false,
+  PICOVOICE_ACCESS_KEY: "",
+  PORCUPINE_KEYWORD_PATH: "",
+  LOCAL_WAKE_SENSITIVITY: 0.5,
+  HOTKEY_ENABLED: true,
+  HOTKEY_VALUE: "Ctrl+Shift+K",
+  HANDSFREE_AUTO_RETURN_TO_WAKE_MODE: true,
   START_WITH_WINDOWS: false,
   BACKGROUND_ASSISTANT_ENABLED: true,
   OPENAI_API_KEY: "",
@@ -32,6 +41,12 @@ const DEFAULT_SETTINGS = {
   SERPAPI_API_KEY: "",
   EDGE_TTS_VOICE: "vi-VN-HoaiMyNeural",
 };
+const singleInstanceLock = app.requestSingleInstanceLock();
+
+if (!singleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
 
 let backendProcess = null;
 let mainWindow = null;
@@ -39,11 +54,31 @@ let windowCreationPromise = null;
 let tray = null;
 let isQuitting = false;
 let settingsCache = null;
+let localWakeWordService = null;
 let reminderPollTimer = null;
 let reminderPollInFlight = false;
+let electronPathsInitialized = false;
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "config.json");
+}
+
+function ensureElectronDataPaths() {
+  if (electronPathsInitialized) {
+    return;
+  }
+
+  const roamingAppData = process.env.APPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Roaming");
+  const userDataPath = path.join(roamingAppData, "KeoBot");
+  const sessionDataPath = path.join(userDataPath, "Session Data");
+  const cachePath = path.join(userDataPath, "Cache");
+
+  app.setPath("userData", userDataPath);
+  fs.mkdirSync(sessionDataPath, { recursive: true });
+  fs.mkdirSync(cachePath, { recursive: true });
+  app.setPath("sessionData", sessionDataPath);
+  app.commandLine.appendSwitch("disk-cache-dir", cachePath);
+  electronPathsInitialized = true;
 }
 
 function normalizeSettings(rawSettings) {
@@ -75,6 +110,20 @@ function normalizeSettings(rawSettings) {
   settings.WAKE_WORD_MODE = settings.WAKE_WORD_MODE === "local_stt" ? "local_stt" : "local_stt";
   settings.START_WITH_WINDOWS = Boolean(settings.START_WITH_WINDOWS);
   settings.BACKGROUND_ASSISTANT_ENABLED = settings.BACKGROUND_ASSISTANT_ENABLED !== false;
+  settings.HOTKEY_ENABLED = settings.HOTKEY_ENABLED !== false;
+  settings.HOTKEY_VALUE = typeof settings.HOTKEY_VALUE === "string" && settings.HOTKEY_VALUE.trim()
+    ? settings.HOTKEY_VALUE.trim()
+    : DEFAULT_SETTINGS.HOTKEY_VALUE;
+  settings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE = settings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE !== false;
+  settings.WAKE_WORD_ENGINE = ["local", "web_speech", "hotkey_only"].includes(settings.WAKE_WORD_ENGINE)
+    ? settings.WAKE_WORD_ENGINE
+    : DEFAULT_SETTINGS.WAKE_WORD_ENGINE;
+  settings.LOCAL_WAKE_WORD_ENABLED = settings.LOCAL_WAKE_WORD_ENABLED === true;
+  settings.PICOVOICE_ACCESS_KEY = typeof settings.PICOVOICE_ACCESS_KEY === "string" ? settings.PICOVOICE_ACCESS_KEY : "";
+  settings.PORCUPINE_KEYWORD_PATH = typeof settings.PORCUPINE_KEYWORD_PATH === "string" ? settings.PORCUPINE_KEYWORD_PATH : "";
+  settings.LOCAL_WAKE_SENSITIVITY = typeof settings.LOCAL_WAKE_SENSITIVITY === "number" && settings.LOCAL_WAKE_SENSITIVITY >= 0 && settings.LOCAL_WAKE_SENSITIVITY <= 1
+    ? settings.LOCAL_WAKE_SENSITIVITY
+    : DEFAULT_SETTINGS.LOCAL_WAKE_SENSITIVITY;
 
   return settings;
 }
@@ -110,6 +159,8 @@ function saveSettingsToDisk(nextSettings) {
   applyStartupSetting(normalized);
   broadcastSettingsChange(normalized);
   refreshTrayMenu();
+  unregisterGlobalHotkeys();
+  registerGlobalHotkeys();
   return normalized;
 }
 
@@ -149,6 +200,14 @@ function broadcastSettingsChange(settings) {
   mainWindow.webContents.send("keobot:settingsChanged", {
     WAKE_WORD_ENABLED: settings.WAKE_WORD_ENABLED,
     WAKE_WORD_PHRASES: settings.WAKE_WORD_PHRASES,
+    WAKE_WORD_ENGINE: settings.WAKE_WORD_ENGINE,
+    LOCAL_WAKE_WORD_ENABLED: settings.LOCAL_WAKE_WORD_ENABLED,
+    PICOVOICE_ACCESS_KEY: settings.PICOVOICE_ACCESS_KEY,
+    PORCUPINE_KEYWORD_PATH: settings.PORCUPINE_KEYWORD_PATH,
+    LOCAL_WAKE_SENSITIVITY: settings.LOCAL_WAKE_SENSITIVITY,
+    HOTKEY_ENABLED: settings.HOTKEY_ENABLED,
+    HOTKEY_VALUE: settings.HOTKEY_VALUE,
+    HANDSFREE_AUTO_RETURN_TO_WAKE_MODE: settings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE,
     START_WITH_WINDOWS: settings.START_WITH_WINDOWS,
     BACKGROUND_ASSISTANT_ENABLED: settings.BACKGROUND_ASSISTANT_ENABLED,
   });
@@ -321,14 +380,14 @@ function requestJson(url, { method = "GET", timeoutMs = 2000 } = {}) {
 }
 
 function showReminderNotification(reminder) {
-  const body = `KeoBot nhắc bạn: ${reminder.title}`;
+  const body = `Kẹo Thông Minh nhắc bạn: ${reminder.title}`;
   if (!Notification.isSupported()) {
     console.log(`[reminder] ${body}`);
     return;
   }
 
   const notification = new Notification({
-    title: "KeoBot",
+    title: "Kẹo Thông Minh",
     body,
   });
   notification.on("click", () => {
@@ -421,14 +480,14 @@ function createTray() {
   }
 
   tray = new Tray(getTrayIcon());
-  tray.setToolTip("KeoBot");
+  tray.setToolTip("Kẹo Thông Minh");
   tray.on("double-click", () => {
     void showMainWindow();
   });
 
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Show KeoBot", click: () => void showMainWindow() },
+      { label: "Show Kẹo Thông Minh", click: () => void showMainWindow() },
       { label: "Start listening", click: () => void startHandsfreeListening() },
       { label: "Stop listening", click: () => void stopHandsfreeListening() },
       { type: "separator" },
@@ -470,19 +529,24 @@ function refreshTrayMenu() {
 }
 
 function registerGlobalHotkeys() {
-  const startRegistered = globalShortcut.register("CommandOrControl+Shift+K", () => {
+  const settings = readSettingsFromDisk();
+  if (!settings.HOTKEY_ENABLED) {
+    return;
+  }
+
+  const hotkey = settings.HOTKEY_VALUE || "CommandOrControl+Shift+K";
+  const startRegistered = globalShortcut.register(hotkey, () => {
     void startHandsfreeListening();
   });
   if (!startRegistered) {
-    console.warn("Failed to register global hotkey Ctrl+Shift+K.");
+    console.warn(
+      `Failed to register global hotkey ${hotkey}. Another app or another Kẹo Thông Minh instance may already be using it. Close duplicate windows or change the shortcut if the conflict persists.`,
+    );
   }
+}
 
-  const stopRegistered = globalShortcut.register("CommandOrControl+Shift+L", () => {
-    void stopHandsfreeListening();
-  });
-  if (!stopRegistered) {
-    console.warn("Failed to register global hotkey Ctrl+Shift+L.");
-  }
+function unregisterGlobalHotkeys() {
+  globalShortcut.unregisterAll();
 }
 
 function spawnBackend() {
@@ -534,7 +598,7 @@ async function waitForBackendReady(timeoutMs) {
 }
 
 async function showFatalError(message) {
-  await dialog.showErrorBox("KeoBot", message);
+  await dialog.showErrorBox("Kẹo Thông Minh", message);
 }
 
 async function createWindow() {
@@ -552,7 +616,7 @@ async function createWindow() {
     height: 760,
     minWidth: 900,
     minHeight: 640,
-    title: "KeoBot",
+    title: "Kẹo Thông Minh",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -617,7 +681,7 @@ async function bootstrap() {
     await waitForBackendReady(BACKEND_START_TIMEOUT_MS);
     await createWindow();
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to start KeoBot desktop app.";
+    const message = error instanceof Error ? error.message : "Failed to start Kẹo Thông Minh desktop app.";
     console.error(message);
     await showFatalError(message);
     app.quit();
@@ -625,6 +689,11 @@ async function bootstrap() {
 }
 
 app.commandLine.appendSwitch("disable-features", "OutOfBlinkCors");
+ensureElectronDataPaths();
+
+app.on("second-instance", () => {
+  void showMainWindow();
+});
 
 app.whenReady().then(() => {
   ipcMain.handle("keobot:getSettings", async () => readSettingsFromDisk());
@@ -661,6 +730,33 @@ app.whenReady().then(() => {
     return { ok: true };
   });
 
+  localWakeWordService = createLocalWakeWordService(
+    (payload) => {
+      mainWindow?.webContents.send("localWakeWord:statusChanged", payload);
+    },
+    (phrase) => {
+      notifyWakeWordDetected(phrase);
+    },
+  );
+
+  ipcMain.handle("localWakeWord:start", async () => {
+    const settings = readSettingsFromDisk();
+    const result = await localWakeWordService.start({
+      accessKey: settings.PICOVOICE_ACCESS_KEY,
+      keywordPath: settings.PORCUPINE_KEYWORD_PATH,
+      sensitivity: settings.LOCAL_WAKE_SENSITIVITY,
+    });
+    return result;
+  });
+
+  ipcMain.handle("localWakeWord:stop", async () => {
+    return localWakeWordService.stop();
+  });
+
+  ipcMain.handle("localWakeWord:getStatus", async () => {
+    return localWakeWordService.getStatus();
+  });
+
   applyStartupSetting();
   createTray();
   registerGlobalHotkeys();
@@ -673,13 +769,16 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   isQuitting = true;
-  globalShortcut.unregisterAll();
+  unregisterGlobalHotkeys();
   if (tray) {
     tray.destroy();
     tray = null;
   }
   stopReminderPolling();
   stopBackend();
+  if (localWakeWordService) {
+    localWakeWordService.stop();
+  }
 });
 
 app.on("window-all-closed", () => {

@@ -21,7 +21,7 @@ def test_voice_chat_mock_mode(client, app_module, monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["user_text"] == "KeoBot oi, ban la ai?"
+    assert payload["user_text"] == "Kẹo Thông Minh oi, ban la ai?"
     assert isinstance(payload["bot_text"], str)
     assert payload["bot_text"].strip()
     assert payload["emotion"] == "happy"

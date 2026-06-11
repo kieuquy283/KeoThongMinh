@@ -14,7 +14,8 @@ type SecretField =
   | "GOOGLE_API_KEY"
   | "OPENWEATHER_API_KEY"
   | "TAVILY_API_KEY"
-  | "SERPAPI_API_KEY";
+  | "SERPAPI_API_KEY"
+  | "PICOVOICE_ACCESS_KEY";
 
 type TestableTool = "weather" | "search" | "currency" | "time";
 
@@ -50,6 +51,7 @@ const SECRET_LABELS: Record<SecretField, string> = {
   OPENWEATHER_API_KEY: "OpenWeather API key",
   TAVILY_API_KEY: "Tavily API key",
   SERPAPI_API_KEY: "SerpAPI API key",
+  PICOVOICE_ACCESS_KEY: "Picovoice access key",
 };
 
 function formatWakeWordPhrases(phrases: string[]): string {
@@ -78,6 +80,7 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
     OPENWEATHER_API_KEY: false,
     TAVILY_API_KEY: false,
     SERPAPI_API_KEY: false,
+    PICOVOICE_ACCESS_KEY: false,
   });
   const isDesktop = typeof window !== "undefined" && Boolean(window.keobotDesktop?.isDesktop);
 
@@ -126,7 +129,7 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
         WAKE_WORD_PHRASES: parseWakeWordPhrases(wakeWordPhrasesText),
       };
       await window.keobotDesktop.saveSettings(nextSettings);
-      setStatus("Da luu cai dat. Hay khoi dong lai KeoBot de ap dung thay doi.");
+      setStatus("Đã lưu cài đặt. Hãy khởi động lại Kẹo Thông Minh để áp dụng thay đổi.");
       onSaved?.(nextSettings);
     } catch {
       setStatus("Khong the luu cai dat.");
@@ -293,6 +296,18 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
             </label>
 
             <label className="settings-field">
+              <span>Wake word engine</span>
+              <select
+                value={settings.WAKE_WORD_ENGINE}
+                onChange={(event) => updateField("WAKE_WORD_ENGINE", event.target.value as KeoBotSettings["WAKE_WORD_ENGINE"])}
+              >
+                <option value="web_speech">Web Speech API</option>
+                <option value="local">Local (Porcupine)</option>
+                <option value="hotkey_only">Hotkey only</option>
+              </select>
+            </label>
+
+            <label className="settings-field">
               <span>Wake word mode</span>
               <input value="local_stt" readOnly />
             </label>
@@ -307,6 +322,73 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
               />
             </label>
 
+            {settings.WAKE_WORD_ENGINE === "local" ? (
+              <>
+                <label className="settings-field">
+                  <span>Picovoice access key</span>
+                  <div className="secret-input">
+                    <input
+                      type={visibleSecrets.PICOVOICE_ACCESS_KEY ? "text" : "password"}
+                      value={settings.PICOVOICE_ACCESS_KEY}
+                      onChange={(event) => updateField("PICOVOICE_ACCESS_KEY", event.target.value)}
+                      autoComplete="off"
+                    />
+                    <button
+                      className="action-button secondary secret-toggle"
+                      type="button"
+                      onClick={() => setVisibleSecrets((current) => ({ ...current, PICOVOICE_ACCESS_KEY: !current.PICOVOICE_ACCESS_KEY }))}
+                    >
+                      {visibleSecrets.PICOVOICE_ACCESS_KEY ? "An" : "Hien"}
+                    </button>
+                  </div>
+                </label>
+
+                <label className="settings-field">
+                  <span>Keyword path (.ppn)</span>
+                  <input
+                    value={settings.PORCUPINE_KEYWORD_PATH}
+                    onChange={(event) => updateField("PORCUPINE_KEYWORD_PATH", event.target.value)}
+                    placeholder="Leave empty to use built-in porcupine keyword"
+                  />
+                </label>
+
+                <label className="settings-field">
+                  <span>Sensitivity ({settings.LOCAL_WAKE_SENSITIVITY.toFixed(2)})</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={settings.LOCAL_WAKE_SENSITIVITY}
+                    onChange={(event) => updateField("LOCAL_WAKE_SENSITIVITY", Number.parseFloat(event.target.value))}
+                  />
+                </label>
+              </>
+            ) : null}
+
+            <label className="settings-field">
+              <span>Global hotkey</span>
+              <input
+                type="checkbox"
+                checked={settings.HOTKEY_ENABLED}
+                onChange={(event) => updateField("HOTKEY_ENABLED", event.target.checked)}
+              />
+            </label>
+
+            <label className="settings-field">
+              <span>Hotkey value</span>
+              <input value={settings.HOTKEY_VALUE} readOnly />
+            </label>
+
+            <label className="settings-field">
+              <span>Auto return to wake mode</span>
+              <input
+                type="checkbox"
+                checked={settings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE}
+                onChange={(event) => updateField("HANDSFREE_AUTO_RETURN_TO_WAKE_MODE", event.target.checked)}
+              />
+            </label>
+
             <label className="settings-field">
               <span>Start with Windows</span>
               <input
@@ -317,7 +399,7 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
             </label>
 
             <label className="settings-field">
-              <span>Keep KeoBot running in background</span>
+              <span>Giữ Kẹo Thông Minh chạy nền</span>
               <input
                 type="checkbox"
                 checked={settings.BACKGROUND_ASSISTANT_ENABLED}
@@ -326,8 +408,8 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
             </label>
           </div>
           <p className="muted-copy">
-            Wake word keeps the microphone active locally. Audio is only sent to the backend after wake word
-            activation.
+            Wake word can use Web Speech API (renderer) or local Porcupine engine (main process). Audio is sent to
+            backend only after activation. Hotkey fallback works regardless of engine.
           </p>
         </section>
 

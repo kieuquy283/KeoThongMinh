@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def test_text_chat_local_mode(client):
-    message = "KeoBot oi, ban la ai?"
+    message = "Kẹo Thông Minh oi, ban la ai?"
 
     response = client.post("/text-chat", json={"message": message})
 
