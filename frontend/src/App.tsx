@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { deleteReminder, fetchReminders } from "./api";
 import { ChatPanel } from "./components/ChatPanel";
 import { KeoBotMascot } from "./components/KeoBotMascot";
+import { KnowledgePanel } from "./components/KnowledgePanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { PrivacyNotice } from "./components/PrivacyNotice";
 import { ReminderPanel } from "./components/ReminderPanel";
@@ -74,6 +75,7 @@ export default function App() {
   const [autoStatus, setAutoStatus] = useState<AutoConversationStatus>("off");
   const [showSettings, setShowSettings] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
+  const [showKnowledge, setShowKnowledge] = useState(false);
   const [showReminders, setShowReminders] = useState(false);
   const [handsfreeMessage, setHandsfreeMessage] = useState<string | null>(null);
   const [desktopSettings, setDesktopSettings] = useState<KeoBotSettings>(DEFAULT_SETTINGS);
@@ -480,6 +482,9 @@ export default function App() {
             <button className="action-button secondary" type="button" onClick={() => setShowReminders((current) => !current)}>
               Reminders
             </button>
+            <button className="action-button secondary" type="button" onClick={() => setShowKnowledge((current) => !current)}>
+              Knowledge
+            </button>
             <button className="action-button secondary" type="button" onClick={() => setShowMemory((current) => !current)}>
               Memory
             </button>
@@ -534,6 +539,8 @@ export default function App() {
           onDelete={(reminderId) => void handleDeleteReminder(reminderId)}
         />
       ) : null}
+
+      {showKnowledge ? <KnowledgePanel onClose={() => setShowKnowledge(false)} /> : null}
 
       {showMemory ? <MemoryPanel onClose={() => setShowMemory(false)} /> : null}
 

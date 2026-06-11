@@ -1009,6 +1009,35 @@ app.whenReady().then(() => {
     }
   });
 
+  // Knowledge file picker
+  ipcMain.handle("keobot:chooseKnowledgeFiles", async () => {
+    try {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: "Choose Knowledge Documents",
+        filters: [
+          { name: "Documents", extensions: ["txt", "md", "pdf", "docx"] },
+        ],
+        properties: ["openFile", "multiSelections"],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { canceled: true, files: [] };
+      }
+      const files = result.filePaths.map((fp) => {
+        let size;
+        try {
+          size = fs.statSync(fp).size;
+        } catch {
+          size = 0;
+        }
+        return { path: fp, name: path.basename(fp), size };
+      });
+      return { canceled: false, files };
+    } catch (err) {
+      mainLogger.error("chooseKnowledgeFiles failed: " + (err instanceof Error ? err.message : String(err)));
+      return { canceled: true, files: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   // Update-related IPC
   ipcMain.handle("update:check", async () => {
     if (!autoUpdater) {

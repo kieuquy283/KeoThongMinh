@@ -69,6 +69,13 @@ declare global {
         indexes_deleted?: number;
         error?: string;
       }>;
+      // Knowledge file picker
+      chooseKnowledgeFiles: () => Promise<{
+        canceled: boolean;
+        files: Array<{ path: string; name: string; size: number }>;
+        error?: string;
+      }>;
+
       // Update events
       onUpdateStatus: (callback: (status: {
         status: "idle" | "checking" | "update_available" | "update_not_available" | "downloading" | "downloaded" | "error";

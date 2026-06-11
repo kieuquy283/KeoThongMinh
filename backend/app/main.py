@@ -12,6 +12,12 @@ from app import data_paths
 from app.data_paths import ensure_data_dirs, get_static_dir
 from app.schemas import (
     HealthResponse,
+    ImportPathRequest,
+    KnowledgeAnswerResponse,
+    KnowledgeChunk,
+    KnowledgeClearRequest,
+    KnowledgeDocument,
+    KnowledgeSearchResult,
     MemoryClearResponse,
     MemoryContextResponse,
     MemoryDeleteResponse,
@@ -36,7 +42,9 @@ from app.schemas import (
     VoiceChatResponse,
 )
 from app.services.chat_flow import generate_chat_response
+from app.services.document_importer import import_document
 from app.services.entity_extractor import extract_entities
+from app.services.knowledge_store import get_knowledge_store
 from app.services.memory_store import get_memory_store
 from app.services.tool_router import detect_tool_intent
 from app.services.reminder_store import get_reminder_store
@@ -254,6 +262,68 @@ async def reset_personal_data() -> ResetPersonalDataResponse:
         documents_deleted=docs_deleted,
         indexes_deleted=idx_deleted,
     )
+
+
+@app.get("/knowledge/documents", response_model=list[KnowledgeDocument])
+async def list_knowledge_documents() -> list[KnowledgeDocument]:
+    return [KnowledgeDocument(**d) for d in get_knowledge_store().list_documents()]
+
+
+@app.post("/knowledge/documents/import")
+async def import_knowledge_document(file: UploadFile = File(...)) -> dict[str, Any]:
+    from app.data_paths import get_temp_dir
+    temp_dir = get_temp_dir()
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = temp_dir / (file.filename or "upload")
+    try:
+        content = await file.read()
+        temp_path.write_bytes(content)
+        result = import_document(temp_path, source_name=file.filename)
+        return result
+    finally:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
+@app.post("/knowledge/documents/import-path")
+async def import_knowledge_document_from_path(payload: ImportPathRequest) -> dict[str, Any]:
+    result = import_document(payload.path)
+    return result
+
+
+@app.delete("/knowledge/documents/{document_id}")
+async def delete_knowledge_document(document_id: int) -> dict[str, Any]:
+    deleted = get_knowledge_store().delete_document(document_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return {"ok": True, "document_id": document_id}
+
+
+@app.post("/knowledge/search", response_model=KnowledgeSearchResult)
+async def search_knowledge(query: str, limit: int = 5) -> KnowledgeSearchResult:
+    chunks = get_knowledge_store().search_chunks(query, limit=limit)
+    return KnowledgeSearchResult(
+        query=query,
+        results=[KnowledgeChunk(**c) for c in chunks],
+        total=len(chunks),
+    )
+
+
+@app.post("/knowledge/ask", response_model=KnowledgeAnswerResponse)
+async def ask_knowledge(query: str) -> KnowledgeAnswerResponse:
+    from app.services.knowledge_query import answer_from_knowledge
+    result = await answer_from_knowledge(query)
+    return KnowledgeAnswerResponse(**result)
+
+
+@app.delete("/knowledge")
+async def clear_knowledge(payload: KnowledgeClearRequest | None = None) -> dict[str, Any]:
+    if payload and not payload.confirm:
+        return {"ok": False, "error": "Confirmation required. Set confirm=true to clear all knowledge."}
+    deleted = get_knowledge_store().clear_knowledge_base()
+    import logging
+    logging.getLogger("keobot.knowledge").info("Knowledge base cleared via API: %d documents", deleted)
+    return {"ok": True, "documents_deleted": deleted}
 
 
 @app.post("/reminders/{reminder_id}/triggered", response_model=ReminderResponse)

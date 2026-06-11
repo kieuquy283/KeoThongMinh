@@ -216,6 +216,17 @@ The frontend defaults to `http://localhost:8000`. Override with:
 VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
+## Knowledge Panel v1.7
+
+The Knowledge panel (`src/components/KnowledgePanel.tsx`) provides local document import, search, and question-answering.
+
+- **Supported file types**: `.txt`, `.md`, `.pdf`, `.docx`
+- **Import via browser**: Standard HTML `<input type="file">` with `accept` filter.
+- **Import via Electron**: Native OS file dialog opened via `window.keobotDesktop.chooseKnowledgeFiles()` IPC.
+- **No cloud upload**: Documents are copied into `KEOBOT_DATA_DIR/documents/` and indexed locally.
+- **Functions**: `importKnowledgeDocument()`, `importKnowledgeDocumentFromPath()`, `searchKnowledge()`, `askKnowledge()`, `deleteKnowledgeDocument()`, `clearKnowledge()` in `src/api.ts`.
+- **Types**: `KnowledgeDocument`, `KnowledgeChunk`, `KnowledgeSearchResult`, `KnowledgeAnswer` in `src/types.ts`.
+
 ## v1.3 — Diagnostics
 
 - `src/utils/diagnostics.ts` — in-memory diagnostic event log with forwarding to main process

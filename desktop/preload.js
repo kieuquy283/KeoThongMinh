@@ -95,4 +95,7 @@ contextBridge.exposeInMainWorld("keobotDesktop", {
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
   downloadUpdate: () => ipcRenderer.invoke("update:download"),
   quitAndInstall: () => ipcRenderer.invoke("update:quitAndInstall"),
+
+  // Knowledge file picker
+  chooseKnowledgeFiles: () => ipcRenderer.invoke("keobot:chooseKnowledgeFiles"),
 });

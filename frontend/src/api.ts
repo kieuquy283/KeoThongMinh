@@ -1,5 +1,8 @@
 import type {
   KeoBotReminder,
+  KnowledgeAnswer,
+  KnowledgeDocument,
+  KnowledgeSearchResult,
   MemoryContextResponse,
   MemoryItem,
   MemoryUpdateRequest,
@@ -199,4 +202,79 @@ export async function clearMemory(): Promise<{ ok: boolean; deleted: number }> {
     throw new Error(await parseError(response));
   }
   return (await response.json()) as { ok: boolean; deleted: number };
+}
+
+export async function listKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/documents`);
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as KnowledgeDocument[];
+}
+
+export async function importKnowledgeDocument(file: File): Promise<Record<string, unknown>> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`${API_BASE_URL}/knowledge/documents/import`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as Record<string, unknown>;
+}
+
+export async function importKnowledgeDocumentFromPath(path: string): Promise<Record<string, unknown>> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/documents/import-path`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as Record<string, unknown>;
+}
+
+export async function deleteKnowledgeDocument(documentId: number): Promise<{ ok: boolean }> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/documents/${documentId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as { ok: boolean };
+}
+
+export async function searchKnowledge(query: string, limit = 5): Promise<KnowledgeSearchResult> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/search?query=${encodeURIComponent(query)}&limit=${limit}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as KnowledgeSearchResult;
+}
+
+export async function askKnowledge(query: string): Promise<KnowledgeAnswer> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/ask?query=${encodeURIComponent(query)}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as KnowledgeAnswer;
+}
+
+export async function clearKnowledge(confirm: boolean): Promise<{ ok: boolean; documents_deleted?: number; error?: string }> {
+  const response = await fetch(`${API_BASE_URL}/knowledge`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm }),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as { ok: boolean; documents_deleted?: number; error?: string };
 }

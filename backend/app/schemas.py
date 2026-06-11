@@ -229,5 +229,54 @@ class ToolSource(BaseModel):
     published_at: datetime | None = None
 
 
+class KnowledgeDocument(BaseModel):
+    id: int
+    filename: str
+    original_filename: str
+    file_type: str
+    size_bytes: int
+    sha256: str
+    stored_path: str
+    status: str
+    created_at: str
+    updated_at: str
+    chunk_count: int
+    error_message: str | None = None
+
+
+class KnowledgeChunk(BaseModel):
+    id: int
+    document_id: int
+    chunk_index: int
+    text: str
+    source_title: str | None = None
+    source_location: str | None = None
+    token_estimate: int = 0
+    created_at: str
+    document_filename: str = ""
+    document_original_filename: str = ""
+
+
+class KnowledgeSearchResult(BaseModel):
+    query: str
+    results: list[KnowledgeChunk]
+    total: int = 0
+
+
+class KnowledgeAnswerResponse(BaseModel):
+    query: str
+    answer: str
+    sources: list[KnowledgeChunk] = Field(default_factory=list)
+    has_sufficient_context: bool = False
+
+
+class KnowledgeClearRequest(BaseModel):
+    confirm: bool = False
+
+
+class ImportPathRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+
+
 TextChatResponse.model_rebuild()
 VoiceChatResponse.model_rebuild()

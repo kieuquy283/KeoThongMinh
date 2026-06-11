@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.providers.llm import generate_keobot_response, generate_keobot_tool_response
+from app.services.knowledge_store import get_knowledge_store
 from app.services.memory_parser import parse_memory_text
 from app.services.memory_store import get_memory_store
 from app.services.reminder_parser import parse_reminder_text
@@ -67,6 +68,10 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
             "updated_at": None,
         }
 
+    knowledge_result = _detect_knowledge_query(user_text)
+    if knowledge_result is not None:
+        return knowledge_result
+
     memory_context = get_memory_store().get_memory_context()
     tool_route = detect_tool_intent(user_text)
     if tool_route.intent != "none" and tool_route.confidence >= TOOL_CONFIDENCE_THRESHOLD:
@@ -103,6 +108,69 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
     return {
         "bot_text": llm_response["bot_text"],
         "emotion": llm_response["emotion"],
+        "action": None,
+        "reminder": None,
+        "tool_used": "none",
+        "tool_result": None,
+        "sources": [],
+        "updated_at": None,
+    }
+
+
+_KNOWLEDGE_TRIGGERS = (
+    "tài liệu", "trong file", "trong document", "trong ghi chú", "trong note",
+    "dựa trên tài liệu", "dựa trên file", "dựa trên ghi chú",
+    "tìm trong tài liệu", "hỏi tài liệu", "cv của tôi", "hồ sơ của tôi",
+    "local document", "my document", "my notes", "my file",
+)
+
+
+def _detect_knowledge_query(user_text: str) -> dict | None:
+    lower = user_text.lower()
+    triggered = any(kw in lower for kw in _KNOWLEDGE_TRIGGERS)
+    if not triggered:
+        return None
+
+    store = get_knowledge_store()
+    docs = store.list_documents()
+    if not docs:
+        return {
+            "bot_text": "Mình chưa có tài liệu nào trong kho local. Bạn hãy import tài liệu trước nhé.",
+            "emotion": "neutral",
+            "action": None,
+            "reminder": None,
+            "tool_used": "none",
+            "tool_result": None,
+            "sources": [],
+            "updated_at": None,
+        }
+
+    chunks = store.search_chunks(user_text, limit=3)
+    if not chunks:
+        return {
+            "bot_text": "Mình chưa tìm thấy thông tin phù hợp trong tài liệu local của bạn.",
+            "emotion": "neutral",
+            "action": None,
+            "reminder": None,
+            "tool_used": "none",
+            "tool_result": None,
+            "sources": [],
+            "updated_at": None,
+        }
+
+    context_parts = []
+    for c in chunks:
+        header = c.get("source_title") or c.get("original_filename", "")
+        text = c.get("text", "").strip()[:500]
+        if header:
+            context_parts.append(f"[{header}]\n{text}")
+        else:
+            context_parts.append(text)
+    context = "\n\n".join(context_parts)
+
+    return {
+        "bot_text": f"Mình tìm thấy thông tin sau trong tài liệu của bạn:\n\n{context}\n\n(Bạn có thể hỏi chi tiết hơn bằng cách dùng chức năng 'Hỏi tài liệu' trong phần Knowledge.)",
+        "emotion": "thinking",
         "action": None,
         "reminder": None,
         "tool_used": "none",

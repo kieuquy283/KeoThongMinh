@@ -97,11 +97,49 @@
 4. Verify: wake word state resumes (if enabled)
 5. Verify: backend starts and health check passes
 
-## 13. Packaged App Smoke
+## 13. Knowledge Panel — HTML Import
+1. Open app, click Knowledge button
+2. Verify: Knowledge panel opens
+3. Click "Chọn file" (browser) or "Choose files" (desktop native)
+4. Select a `.txt` file
+5. Verify: import succeeds, document appears in list with status "Indexed"
+6. Verify: file type, size, chunk count are shown
+7. Search for a phrase from the document
+8. Verify: matching chunks are displayed
+9. Ask a question: `Trong tài liệu có nội dung gì?`
+10. Verify: answer is returned with source citations
+11. Click Xóa to delete the document
+12. Verify: document is removed from list
+
+## 14. Knowledge Panel — Native File Picker (Desktop Only)
+1. With the desktop app, click Knowledge > Choose files
+2. Verify: native OS file dialog opens
+3. Verify: dialog filters to `.txt`, `.md`, `.pdf`, `.docx`
+4. Select multiple files and confirm
+5. Verify: each file imports successfully
+6. Verify: files are stored under `userData/documents/` (check by verifying UUID filenames)
+7. Verify: indexes are under `userData/indexes/knowledge.sqlite3`
+
+## 15. Knowledge Panel — Web Fallback
+1. Open the frontend in a browser (not Electron)
+2. Click Knowledge button
+3. Verify: "Chọn file" button is shown (not "Choose files")
+4. Import a file via the browser picker
+5. Verify: import works same as desktop
+
+## 16. Knowledge Privacy / Path Safety
+1. Verify: imported files are copied into `KEOBOT_DATA_DIR/documents/` (not referenced from original path)
+2. Verify: SHA256 duplicate detection rejects re-import of the same file
+3. Verify: unsupported file types (`.png`, `.exe`) are rejected
+4. Verify: non-existent path is rejected gracefully
+5. Verify: Electron IPC does not read file contents in main process (only returns path metadata)
+
+## 17. Packaged App Smoke
 1. Run the portable `.exe` from release directory
 2. Verify: backend starts (check `curl http://127.0.0.1:8000/health`)
 3. Verify: main window appears
 4. Verify: text chat works
 5. Verify: voice chat works (if microphone available)
 6. Verify: tray icon appears
-7. Close app: verify backend also exits
+7. Verify: Knowledge panel opens and native file picker works
+8. Close app: verify backend also exits

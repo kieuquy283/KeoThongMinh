@@ -193,6 +193,21 @@ Allowed memory keys:
 - Notifications appear while the desktop app is running, even when the window is hidden to tray.
 - Due reminders are polled from the local backend on a timer.
 
+## Knowledge File Picker v1.7.1
+
+The desktop app now provides a native Electron file picker for importing documents into the Knowledge base.
+
+- **IPC channel**: `keobot:chooseKnowledgeFiles`
+- **Renderer binding**: `window.keobotDesktop.chooseKnowledgeFiles()`
+- **Dialog**: `dialog.showOpenDialog` with filter `["txt", "md", "pdf", "docx"]` and `multiSelections`
+- **Returns**: `{ canceled, files: Array<{ path, name, size }> }`
+- **Safety**:
+  - Only file metadata (path, name, size) is returned to the renderer — no file contents read in the main process.
+  - The renderer sends each path to `POST /knowledge/documents/import-path` on the local backend.
+  - The backend reads the file, verifies SHA256, copies it into `KEOBOT_DATA_DIR/documents/`, and indexes it.
+  - The original path is not used as the permanent storage location.
+- **Fallback**: If `window.keobotDesktop` is unavailable (browser dev mode), the Knowledge panel uses a standard HTML `<input type="file">`.
+
 ## v1.3 — Diagnostics & Logging
 
 - Structured logs at `%APPDATA%/KeoBot/logs/` (main, backend, wake-word, update)

@@ -515,6 +515,29 @@ npm run smoke:packaged
 4. Ask `Thoi tiet hom nay the nao?` and confirm the backend applies the remembered city as its default.
 5. Say `Xoa thanh pho mac dinh cua minh`.
 
+## Local Knowledge Base v1.7
+
+Kẹo Thông Minh supports importing local documents (TXT, MD, PDF, DOCX) for private, on-device question-answering.
+
+- Import documents via the Knowledge panel (browser file picker or Electron native dialog).
+- Documents are stored under `KEOBOT_DATA_DIR/documents/` as UUID-named copies.
+- Text is extracted, chunked (700-word target), and indexed into SQLite FTS5 under `KEOBOT_DATA_DIR/indexes/knowledge.sqlite3`.
+- No cloud upload. No vector DB (keyword-first, extensible to vector).
+- In the Electron desktop app, a native file picker filters to `.txt/.md/.pdf/.docx` and supports multi-select.
+- In browser dev mode, the standard HTML `<input type="file">` is used.
+- Imported files with duplicate SHA256 are rejected.
+- Chat flow detects Vietnamese knowledge queries (`tài liệu`, `trong file`, `hỏi tài liệu`, etc.) and routes to knowledge search.
+
+### Knowledge quick test
+
+1. Open the Knowledge panel via the Knowledge button.
+2. Import a `.txt` or `.md` file.
+3. Search for a phrase from the document.
+4. Ask a question based on the document (e.g., `Trong tài liệu có nội dung gì về AI?`).
+5. Confirm the answer includes source citations.
+6. Delete the document from the list.
+7. (Desktop only) Use the native file picker to import multiple files at once.
+
 ## v1.3 — Release Hardening, Auto Update & Crash Diagnostics
 
 ### Diagnostics & Logging

@@ -12,7 +12,7 @@ export type Emotion =
   | "confused";
 
 export type ChatAction = "reminder_created" | "tool_response" | "memory_updated" | "memory_deleted";
-export type ToolUsed = "weather" | "time" | "currency" | "news_search" | "general_search" | "none";
+export type ToolUsed = "weather" | "time" | "currency" | "news_search" | "general_search" | "knowledge" | "none";
 export type ConversationMode = "manual" | "auto";
 
 export type AutoConversationStatus =
@@ -178,6 +178,43 @@ export type WakeWordStatus =
   | "unsupported"
   | "unavailable"
   | "error";
+
+export interface KnowledgeDocument {
+  id: number;
+  filename: string;
+  original_filename: string;
+  file_type: string;
+  size_bytes: number;
+  sha256: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  chunk_count: number;
+  error_message: string | null;
+}
+
+export interface KnowledgeChunk {
+  id: number;
+  document_id: number;
+  chunk_index: number;
+  text: string;
+  source_title?: string | null;
+  source_location?: string | null;
+  token_estimate: number;
+}
+
+export interface KnowledgeSearchResult {
+  query: string;
+  results: KnowledgeChunk[];
+  total: number;
+}
+
+export interface KnowledgeAnswer {
+  query: string;
+  answer: string;
+  sources: KnowledgeChunk[];
+  has_sufficient_context: boolean;
+}
 
 export interface WakeWordState {
   status: WakeWordStatus;
