@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -8,7 +9,10 @@ from typing import Any
 
 from app.config import get_settings
 
+logger = logging.getLogger("keobot.memory")
+
 MEMORY_DB_FILENAME = "memory.sqlite3"
+SCHEMA_VERSION = 2
 
 
 def get_default_db_path() -> Path:
@@ -45,8 +49,20 @@ class MemoryStore:
                 )
                 """
             )
+            self._migrate(connection)
 
-    def set_memory(self, key: str, value: str, category: str = "preference") -> dict[str, Any]:
+    def _migrate(self, connection: sqlite3.Connection) -> None:
+        cursor = connection.execute("PRAGMA user_version")
+        current_version = int(cursor.fetchone()[0])
+
+        if current_version < 2:
+            connection.execute("ALTER TABLE memory_items ADD COLUMN source TEXT NOT NULL DEFAULT 'explicit_user_request'")
+            connection.execute("ALTER TABLE memory_items ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0")
+            connection.execute("ALTER TABLE memory_items ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1")
+            connection.execute("ALTER TABLE memory_items ADD COLUMN last_used_at TEXT")
+            connection.execute("PRAGMA user_version = 2")
+
+    def set_memory(self, key: str, value: str, category: str = "preference", source: str = "explicit_user_request", confidence: float = 1.0) -> dict[str, Any]:
         normalized_key = _normalize_key(key)
         normalized_value = _normalize_value(value)
         normalized_category = _normalize_category(category)
@@ -60,10 +76,10 @@ class MemoryStore:
             if row is None:
                 connection.execute(
                     """
-                    INSERT INTO memory_items (key, value, category, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO memory_items (key, value, category, source, confidence, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (normalized_key, normalized_value, normalized_category, current_time, current_time),
+                    (normalized_key, normalized_value, normalized_category, source, confidence, current_time, current_time),
                 )
             else:
                 connection.execute(
@@ -78,14 +94,64 @@ class MemoryStore:
         item = self.get_memory(normalized_key)
         if item is None:
             raise RuntimeError("Failed to persist memory item.")
+        logger.info("Memory set: key=%s value=%s category=%s source=%s", normalized_key, normalized_value, normalized_category, source)
         return item
+
+    def update_memory(self, key: str, value: str | None = None, category: str | None = None, is_enabled: bool | None = None) -> dict[str, Any] | None:
+        normalized_key = _normalize_key(key)
+        existing = self.get_memory(normalized_key)
+        if existing is None:
+            return None
+
+        current_time = datetime.now(timezone.utc).isoformat()
+        new_value = value if value is not None else existing["value"]
+        new_category = category if category is not None else existing["category"]
+        new_is_enabled = is_enabled if is_enabled is not None else existing["is_enabled"]
+
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE memory_items
+                SET value = ?, category = ?, is_enabled = ?, updated_at = ?
+                WHERE key = ?
+                """,
+                (new_value, new_category, int(new_is_enabled), current_time, normalized_key),
+            )
+
+        logger.info("Memory updated: key=%s value=%s category=%s is_enabled=%s", normalized_key, new_value, new_category, new_is_enabled)
+        return self.get_memory(normalized_key)
+
+    def set_memory_enabled(self, key: str, is_enabled: bool) -> dict[str, Any] | None:
+        normalized_key = _normalize_key(key)
+        existing = self.get_memory(normalized_key)
+        if existing is None:
+            return None
+
+        current_time = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE memory_items SET is_enabled = ?, updated_at = ? WHERE key = ?",
+                (int(is_enabled), current_time, normalized_key),
+            )
+
+        logger.info("Memory toggle: key=%s is_enabled=%s", normalized_key, is_enabled)
+        return self.get_memory(normalized_key)
+
+    def touch_memory(self, key: str) -> None:
+        normalized_key = _normalize_key(key)
+        current_time = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE memory_items SET last_used_at = ? WHERE key = ?",
+                (current_time, normalized_key),
+            )
 
     def get_memory(self, key: str) -> dict[str, Any] | None:
         normalized_key = _normalize_key(key)
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT key, value, category, created_at, updated_at
+                SELECT key, value, category, source, confidence, is_enabled, created_at, updated_at, last_used_at
                 FROM memory_items
                 WHERE key = ?
                 """,
@@ -99,7 +165,7 @@ class MemoryStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT key, value, category, created_at, updated_at
+                SELECT key, value, category, source, confidence, is_enabled, created_at, updated_at, last_used_at
                 FROM memory_items
                 ORDER BY updated_at DESC, key ASC
                 """
@@ -110,19 +176,23 @@ class MemoryStore:
         normalized_key = _normalize_key(key)
         with self._connect() as connection:
             cursor = connection.execute("DELETE FROM memory_items WHERE key = ?", (normalized_key,))
-        return cursor.rowcount > 0
+        result = cursor.rowcount > 0
+        if result:
+            logger.info("Memory deleted: key=%s", normalized_key)
+        return result
 
     def clear_memory(self) -> int:
         with self._connect() as connection:
             count_row = connection.execute("SELECT COUNT(*) AS count FROM memory_items").fetchone()
             count = int(count_row["count"]) if count_row is not None else 0
             connection.execute("DELETE FROM memory_items")
+        logger.info("Memory cleared: deleted=%d", count)
         return count
 
     def get_memory_context(self) -> dict[str, str]:
         context: dict[str, str] = {}
         for item in self.list_memory():
-            if item["key"] in SAFE_CONTEXT_KEYS and item["value"]:
+            if item["key"] in SAFE_CONTEXT_KEYS and item["value"] and item["is_enabled"]:
                 context[item["key"]] = item["value"]
         return context
 
@@ -131,8 +201,12 @@ class MemoryStore:
             "key": str(row["key"]),
             "value": str(row["value"]),
             "category": str(row["category"]),
+            "source": str(row["source"]),
+            "confidence": float(row["confidence"]),
+            "is_enabled": bool(row["is_enabled"]),
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
+            "last_used_at": str(row["last_used_at"]) if row["last_used_at"] else None,
         }
 
 

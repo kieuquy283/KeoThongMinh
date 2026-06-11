@@ -11,8 +11,10 @@ from app.config import get_settings
 from app.schemas import (
     HealthResponse,
     MemoryClearResponse,
+    MemoryContextResponse,
     MemoryDeleteResponse,
     MemoryItemResponse,
+    MemoryUpdateRequest,
     MemoryUpsertRequest,
     ReminderCreateRequest,
     ReminderDeleteResponse,
@@ -113,6 +115,44 @@ async def delete_memory(memory_key: str) -> MemoryDeleteResponse:
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory item not found.")
     return MemoryDeleteResponse()
+
+
+@app.patch("/memory/{memory_key}", response_model=MemoryItemResponse)
+async def update_memory(memory_key: str, payload: MemoryUpdateRequest) -> MemoryItemResponse:
+    store = get_memory_store()
+    item = store.update_memory(
+        memory_key,
+        value=payload.value,
+        category=payload.category,
+        is_enabled=payload.is_enabled,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Memory item not found.")
+    return MemoryItemResponse.model_validate(item)
+
+
+@app.post("/memory/{memory_key}/enable", response_model=MemoryItemResponse)
+async def enable_memory(memory_key: str) -> MemoryItemResponse:
+    store = get_memory_store()
+    item = store.set_memory_enabled(memory_key, True)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Memory item not found.")
+    return MemoryItemResponse.model_validate(item)
+
+
+@app.post("/memory/{memory_key}/disable", response_model=MemoryItemResponse)
+async def disable_memory(memory_key: str) -> MemoryItemResponse:
+    store = get_memory_store()
+    item = store.set_memory_enabled(memory_key, False)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Memory item not found.")
+    return MemoryItemResponse.model_validate(item)
+
+
+@app.get("/memory/context", response_model=MemoryContextResponse)
+async def memory_context() -> MemoryContextResponse:
+    context = get_memory_store().get_memory_context()
+    return MemoryContextResponse(context=context)
 
 
 @app.delete("/memory", response_model=MemoryClearResponse)

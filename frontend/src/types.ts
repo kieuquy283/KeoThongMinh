@@ -51,8 +51,12 @@ export interface MemoryItem {
     | "answer_style";
   value: string;
   category: string;
+  source: string;
+  confidence: number;
+  is_enabled: boolean;
   created_at: string;
   updated_at: string;
+  last_used_at: string | null;
 }
 
 export interface ToolProviderStatus {
@@ -87,6 +91,16 @@ export interface MemoryUpsertRequest {
   key: MemoryItem["key"];
   value: string;
   category?: string;
+}
+
+export interface MemoryUpdateRequest {
+  value?: string;
+  category?: string;
+  is_enabled?: boolean;
+}
+
+export interface MemoryContextResponse {
+  context: Record<string, string>;
 }
 
 export interface VoiceChatResponse {

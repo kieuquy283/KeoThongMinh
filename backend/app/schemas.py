@@ -76,8 +76,12 @@ class MemoryItemResponse(BaseModel):
     key: str
     value: str
     category: str = "preference"
+    source: str = "explicit_user_request"
+    confidence: float = 1.0
+    is_enabled: bool = True
     created_at: datetime
     updated_at: datetime
+    last_used_at: datetime | None = None
 
 
 class MemoryUpsertRequest(BaseModel):
@@ -94,6 +98,12 @@ class MemoryUpsertRequest(BaseModel):
     category: str = Field(default="preference", min_length=1, max_length=100)
 
 
+class MemoryUpdateRequest(BaseModel):
+    value: str | None = None
+    category: str | None = None
+    is_enabled: bool | None = None
+
+
 class MemoryDeleteResponse(BaseModel):
     ok: bool = True
 
@@ -101,6 +111,10 @@ class MemoryDeleteResponse(BaseModel):
 class MemoryClearResponse(BaseModel):
     ok: bool = True
     deleted: int = 0
+
+
+class MemoryContextResponse(BaseModel):
+    context: dict[str, str]
 
 
 class ToolProviderStatus(BaseModel):

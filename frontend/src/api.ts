@@ -1,6 +1,8 @@
 import type {
   KeoBotReminder,
+  MemoryContextResponse,
   MemoryItem,
+  MemoryUpdateRequest,
   MemoryUpsertRequest,
   ToolTestRequest,
   ToolTestResponse,
@@ -145,6 +147,48 @@ export async function deleteMemoryItem(key: MemoryItem["key"]): Promise<void> {
   if (!response.ok) {
     throw new Error(await parseError(response));
   }
+}
+
+export async function updateMemoryItem(key: string, request: MemoryUpdateRequest): Promise<MemoryItem> {
+  const response = await fetch(`${API_BASE_URL}/memory/${encodeURIComponent(key)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as MemoryItem;
+}
+
+export async function enableMemoryItem(key: string): Promise<MemoryItem> {
+  const response = await fetch(`${API_BASE_URL}/memory/${encodeURIComponent(key)}/enable`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as MemoryItem;
+}
+
+export async function disableMemoryItem(key: string): Promise<MemoryItem> {
+  const response = await fetch(`${API_BASE_URL}/memory/${encodeURIComponent(key)}/disable`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as MemoryItem;
+}
+
+export async function fetchMemoryContext(): Promise<MemoryContextResponse> {
+  const response = await fetch(`${API_BASE_URL}/memory/context`);
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as MemoryContextResponse;
 }
 
 export async function clearMemory(): Promise<{ ok: boolean; deleted: number }> {

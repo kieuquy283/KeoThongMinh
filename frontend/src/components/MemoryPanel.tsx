@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { clearMemory, deleteMemoryItem, fetchMemory, saveMemoryItem } from "../api";
+import { clearMemory, deleteMemoryItem, disableMemoryItem, enableMemoryItem, fetchMemory, saveMemoryItem } from "../api";
 import type { MemoryItem } from "../types";
 
 interface MemoryPanelProps {
@@ -79,6 +79,21 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
       await loadMemory();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Khong the xoa bo nho.");
+    }
+  };
+
+  const handleToggle = async (item: MemoryItem) => {
+    setStatus(item.is_enabled ? "Dang tat bo nho..." : "Dang bat bo nho...");
+    try {
+      if (item.is_enabled) {
+        await disableMemoryItem(item.key);
+      } else {
+        await enableMemoryItem(item.key);
+      }
+      setStatus(item.is_enabled ? "Da tat bo nho." : "Da bat bo nho.");
+      await loadMemory();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Khong the thay doi trang thai.");
     }
   };
 
@@ -168,11 +183,22 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
                       <strong>{item.category}</strong>
                     </div>
                     <div className="meta-row">
+                      <span>Source</span>
+                      <strong>{item.source}</strong>
+                    </div>
+                    <div className="meta-row">
+                      <span>Enabled</span>
+                      <strong>{item.is_enabled ? "Yes" : "No"}</strong>
+                    </div>
+                    <div className="meta-row">
                       <span>Updated</span>
                       <strong>{new Date(item.updated_at).toLocaleString()}</strong>
                     </div>
                   </div>
                   <div className="memory-actions">
+                    <button className="action-button secondary" type="button" onClick={() => handleToggle(item)}>
+                      {item.is_enabled ? "Disable" : "Enable"}
+                    </button>
                     <button className="action-button secondary" type="button" onClick={() => handleEdit(item)}>
                       Edit
                     </button>
