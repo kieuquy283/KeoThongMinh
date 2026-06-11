@@ -9,6 +9,8 @@ venv/
 # FastAPI runtime
 backend/tmp/
 backend/build/
+backend/data/
+backend/dist/
 backend/app/static/audio/*.mp3
 backend/app/static/audio/*.wav
 backend/app/static/audio/*.webm

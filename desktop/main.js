@@ -6,8 +6,10 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { ipcMain } = require("electron");
 const { createLocalWakeWordService } = require("./localWakeWord");
+const { Logger } = require("./services/logger");
 
-const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, nativeImage } = require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, dialog, globalShortcut, nativeImage, shell } = require("electron");
+const packageJson = require("./package.json");
 
 const DEV_FRONTEND_URL = "http://localhost:5173";
 const BACKEND_URL = "http://127.0.0.1:8000";
@@ -59,6 +61,30 @@ let reminderPollTimer = null;
 let reminderPollInFlight = false;
 let electronPathsInitialized = false;
 
+// Loggers (initialised after app ready)
+let mainLogger = null;
+let backendLogger = null;
+let wakeWordLogger = null;
+let updateLogger = null;
+
+// Auto-updater
+let autoUpdater = null;
+
+const COMMIT_HASH = process.env.KEOBOT_COMMIT_HASH || "";
+const BUILD_MODE = app.isPackaged ? "production" : "development";
+const UPDATE_CHANNEL = "stable";
+
+function hasPublishConfig() {
+  try {
+    const buildPublish = packageJson.build?.publish;
+    if (!buildPublish) return false;
+    const list = Array.isArray(buildPublish) ? buildPublish : [buildPublish];
+    return list.some((p) => p && p.provider === "github");
+  } catch {
+    return false;
+  }
+}
+
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "config.json");
 }
@@ -79,6 +105,35 @@ function ensureElectronDataPaths() {
   app.setPath("sessionData", sessionDataPath);
   app.commandLine.appendSwitch("disk-cache-dir", cachePath);
   electronPathsInitialized = true;
+}
+
+function initLoggers() {
+  mainLogger = new Logger("main");
+  backendLogger = new Logger("backend");
+  wakeWordLogger = new Logger("wake-word");
+  updateLogger = new Logger("update");
+}
+
+process.on("uncaughtException", (error) => {
+  const msg = error instanceof Error ? error.stack || error.message : String(error);
+  if (mainLogger) mainLogger.error(`Uncaught exception: ${msg}`);
+  console.error("UNCAUGHT EXCEPTION:", msg);
+});
+
+process.on("unhandledRejection", (reason) => {
+  const msg = reason instanceof Error ? reason.stack || reason.message : String(reason);
+  if (mainLogger) mainLogger.error(`Unhandled rejection: ${msg}`);
+  console.error("UNHANDLED REJECTION:", msg);
+});
+
+function getLogsDir() {
+  return path.join(app.getPath("userData"), "logs");
+}
+
+function openLogsFolder() {
+  const logsDir = getLogsDir();
+  fs.mkdirSync(logsDir, { recursive: true });
+  shell.openPath(logsDir);
 }
 
 function normalizeSettings(rawSettings) {
@@ -318,10 +373,60 @@ async function notifyWakeWordStatus(status) {
   mainWindow?.webContents.send("wakeword:status", status);
 }
 
+function tryInitAutoUpdater() {
+  try {
+    autoUpdater = require("electron-updater").autoUpdater;
+    autoUpdater.logger = updateLogger || console;
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on("checking-for-update", () => {
+      if (updateLogger) updateLogger.info("Checking for update...");
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update:status", { status: "checking" });
+      }
+    });
+    autoUpdater.on("update-available", (info) => {
+      if (updateLogger) updateLogger.info(`Update available: ${JSON.stringify(info)}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update:status", { status: "update_available", info });
+      }
+    });
+    autoUpdater.on("update-not-available", (info) => {
+      if (updateLogger) updateLogger.info("No update available");
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update:status", { status: "update_not_available", info });
+      }
+    });
+    autoUpdater.on("error", (error) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (updateLogger) updateLogger.error(`Update error: ${msg}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update:status", { status: "error", message: msg });
+      }
+    });
+    autoUpdater.on("download-progress", (progress) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update:status", { status: "downloading", progress });
+      }
+    });
+    autoUpdater.on("update-downloaded", (info) => {
+      if (updateLogger) updateLogger.info(`Update downloaded: ${JSON.stringify(info)}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("update:status", { status: "downloaded", info });
+      }
+    });
+  } catch {
+    if (updateLogger) updateLogger.info("electron-updater not available — update support disabled");
+  }
+}
+
 function logBackendOutput(streamName, data) {
   const message = data.toString().trim();
   if (message) {
+    const line = `[${streamName}] ${message}`;
     console.log(`[backend:${streamName}] ${message}`);
+    if (backendLogger) backendLogger.info(line);
   }
 }
 
@@ -432,6 +537,7 @@ async function pollDueReminders() {
     }
 
     for (const reminder of reminders) {
+      if (mainLogger) mainLogger.info(`Reminder due: ${reminder.id} "${reminder.title}"`);
       showReminderNotification(reminder);
       emitReminderDue(reminder);
       await markReminderTriggered(reminder.id);
@@ -445,6 +551,7 @@ async function pollDueReminders() {
 
 function startReminderPolling() {
   stopReminderPolling();
+  if (mainLogger) mainLogger.info("Reminder polling started");
   reminderPollTimer = setInterval(() => {
     void pollDueReminders();
   }, REMINDER_POLL_INTERVAL_MS);
@@ -482,6 +589,7 @@ function createTray() {
   tray = new Tray(getTrayIcon());
   tray.setToolTip("Kẹo Thông Minh");
   tray.on("double-click", () => {
+    if (mainLogger) mainLogger.info("Tray double-click");
     void showMainWindow();
   });
 
@@ -536,9 +644,12 @@ function registerGlobalHotkeys() {
 
   const hotkey = settings.HOTKEY_VALUE || "CommandOrControl+Shift+K";
   const startRegistered = globalShortcut.register(hotkey, () => {
+    if (mainLogger) mainLogger.info(`Hotkey triggered: ${hotkey}`);
     void startHandsfreeListening();
   });
-  if (!startRegistered) {
+  if (startRegistered) {
+    if (mainLogger) mainLogger.info(`Global hotkey registered: ${hotkey}`);
+  } else {
     console.warn(
       `Failed to register global hotkey ${hotkey}. Another app or another Kẹo Thông Minh instance may already be using it. Close duplicate windows or change the shortcut if the conflict persists.`,
     );
@@ -674,7 +785,13 @@ async function bootstrap() {
       backendProcess.stdout?.on("data", (data) => logBackendOutput("stdout", data));
       backendProcess.stderr?.on("data", (data) => logBackendOutput("stderr", data));
       backendProcess.on("error", (error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (mainLogger) mainLogger.error(`Backend process error: ${msg}`);
         console.error("Backend process error:", error);
+      });
+      backendProcess.on("exit", (code, signal) => {
+        if (mainLogger) mainLogger.info(`Backend process exited (code=${code}, signal=${signal})`);
+        console.log(`[main] Backend process exited (code=${code}, signal=${signal})`);
       });
     }
 
@@ -696,6 +813,14 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(() => {
+  initLoggers();
+  mainLogger.info(`App starting (version=${app.isPackaged ? app.getVersion() : "dev"}, buildMode=${BUILD_MODE})`);
+  mainLogger.info(`Electron ${process.versions.electron}, Node ${process.versions.node}, Chrome ${process.versions.chrome}`);
+
+  tryInitAutoUpdater();
+  const publishConfigured = hasPublishConfig();
+  mainLogger.info(`Auto-updater: ${autoUpdater ? "initialized" : "disabled"} (publishProvider=${publishConfigured ? "github" : "none"})`);
+
   ipcMain.handle("keobot:getSettings", async () => readSettingsFromDisk());
   ipcMain.handle("keobot:saveSettings", async (_event, nextSettings) => {
     saveSettingsToDisk(nextSettings);
@@ -732,9 +857,11 @@ app.whenReady().then(() => {
 
   localWakeWordService = createLocalWakeWordService(
     (payload) => {
+      if (wakeWordLogger) wakeWordLogger.info(`Status: ${JSON.stringify(payload)}`);
       mainWindow?.webContents.send("localWakeWord:statusChanged", payload);
     },
     (phrase) => {
+      if (wakeWordLogger) wakeWordLogger.info(`Detected: ${phrase}`);
       notifyWakeWordDetected(phrase);
     },
   );
@@ -757,6 +884,92 @@ app.whenReady().then(() => {
     return localWakeWordService.getStatus();
   });
 
+  // Diagnostics & metadata
+  ipcMain.handle("keobot:getAppInfo", async () => ({
+    appVersion: app.isPackaged ? app.getVersion() : packageJson.version,
+    buildMode: BUILD_MODE,
+    commitHash: COMMIT_HASH,
+    updateChannel: UPDATE_CHANNEL,
+    publishProvider: hasPublishConfig() ? "github" : null,
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node,
+    chromeVersion: process.versions.chrome,
+  }));
+
+  ipcMain.handle("keobot:getBackendHealth", async () => {
+    try {
+      const healthy = await isBackendHealthy(2000);
+      let backendVersion = null;
+      try {
+        const resp = await fetch("http://127.0.0.1:8765/health", { signal: AbortSignal.timeout(2000) });
+        if (resp.ok) {
+          const data = await resp.json();
+          backendVersion = data.version || null;
+        }
+      } catch {
+        // backend not reachable yet
+      }
+      return { healthy, version: backendVersion };
+    } catch {
+      return { healthy: false, version: null };
+    }
+  });
+
+  ipcMain.handle("keobot:logDiagnostic", async (_event, payload) => {
+    if (!payload || typeof payload !== "object") return;
+    const { category, message, meta } = payload;
+    const targetLogger =
+      category === "wake_word" ? wakeWordLogger :
+      category === "voice_session" ? mainLogger :
+      category === "reminder" ? mainLogger :
+      category === "error" ? mainLogger :
+      null;
+    if (targetLogger) {
+      targetLogger.info(`[renderer:${category}] ${message}${meta ? " " + JSON.stringify(meta) : ""}`);
+    }
+  });
+
+  ipcMain.handle("keobot:openLogsFolder", async () => {
+    openLogsFolder();
+    return { ok: true };
+  });
+
+  // Update-related IPC
+  ipcMain.handle("update:check", async () => {
+    if (!autoUpdater) {
+      return { ok: false, error: "Auto update is not available." };
+    }
+    if (!hasPublishConfig()) {
+      return { ok: false, error: "Auto update is not configured for this build." };
+    }
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return { ok: true, result };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (updateLogger) updateLogger.error(`Check for updates failed: ${msg}`);
+      return { ok: false, error: msg };
+    }
+  });
+
+  ipcMain.handle("update:download", async () => {
+    if (!autoUpdater) {
+      return { ok: false, error: "Auto update is not configured for this build." };
+    }
+    autoUpdater.downloadUpdate().catch((err) => {
+      if (updateLogger) updateLogger.error(`Download update failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+    return { ok: true };
+  });
+
+  ipcMain.handle("update:quitAndInstall", async () => {
+    if (!autoUpdater) {
+      return { ok: false, error: "Auto update is not configured for this build." };
+    }
+    setImmediate(() => autoUpdater.quitAndInstall());
+    return { ok: true };
+  });
+
   applyStartupSetting();
   createTray();
   registerGlobalHotkeys();
@@ -769,6 +982,7 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  if (mainLogger) mainLogger.info("App quitting");
   unregisterGlobalHotkeys();
   if (tray) {
     tray.destroy();
@@ -779,6 +993,14 @@ app.on("before-quit", () => {
   if (localWakeWordService) {
     localWakeWordService.stop();
   }
+  if (mainLogger) mainLogger.info("Cleanup complete, closing loggers");
+  // Close loggers after a short delay to flush pending writes
+  setTimeout(() => {
+    if (mainLogger) mainLogger.close();
+    if (backendLogger) backendLogger.close();
+    if (wakeWordLogger) wakeWordLogger.close();
+    if (updateLogger) updateLogger.close();
+  }, 500);
 });
 
 app.on("window-all-closed", () => {

@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.4.0). If empty, uses package.json version."
+        required: false
+        type: string
+      dry_run:
+        description: "Build and validate artifacts without publishing."
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: pip install -r backend/requirements.txt pyinstaller
+        shell: powershell
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache Node.js dependencies (frontend)
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-frontend-
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+        shell: powershell
+
+      - name: Cache Node.js dependencies (desktop)
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: ${{ runner.os }}-desktop-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-desktop-
+
+      - name: Install desktop dependencies
+        run: npm ci
+        working-directory: desktop
+        shell: powershell
+
+      - name: Run backend tests
+        run: python -m pytest tests/ -q
+        working-directory: backend
+        shell: powershell
+
+      - name: Run backend validation
+        run: python scripts/validate_backend.py
+        working-directory: backend
+        shell: powershell
+
+      - name: Build backend executable
+        run: python scripts/build_backend_exe.py
+        working-directory: backend
+        shell: powershell
+        timeout-minutes: 30
+
+      - name: Smoke test backend executable
+        run: python scripts/smoke_backend_exe.py
+        working-directory: backend
+        shell: powershell
+
+      - name: Run frontend typecheck
+        run: npx tsc --noEmit
+        working-directory: frontend
+        shell: powershell
+
+      - name: Run frontend build
+        run: npx vite build
+        working-directory: frontend
+        shell: powershell
+
+      - name: Run desktop syntax check
+        run: node --check main.js && node --check preload.js
+        working-directory: desktop
+        shell: powershell
+
+      - name: Build desktop package
+        run: npm run build
+        working-directory: desktop
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run release artifact validation
+        run: node scripts/validate_release_artifacts.js
+        working-directory: desktop
+        shell: powershell
+
+      - name: Run packaged smoke test
+        run: node scripts/smoke_packaged_app.js
+        working-directory: desktop
+        shell: powershell
+
+      - name: Upload release artifacts
+        if: ${{ !inputs.dry_run }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version || '0.3.0' }}
+          draft: true
+          files: |
+            release/KeoThongMinh-Portable-*.exe
+            release/KeoThongMinh-Setup-*.exe
+            release/win-unpacked/resources/backend/keobot_backend/keobot_backend.exe
+            release/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List release directory
+        if: ${{ always() }}
+        run: Get-ChildItem -LiteralPath release -Name
+        working-directory: ./
+        shell: powershell

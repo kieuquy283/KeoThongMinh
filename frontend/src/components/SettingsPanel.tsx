@@ -82,6 +82,12 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
     SERPAPI_API_KEY: false,
     PICOVOICE_ACCESS_KEY: false,
   });
+  const [appInfo, setAppInfo] = useState<{ appVersion: string; buildMode: string; commitHash: string; updateChannel: string; publishProvider: string | null } | null>(null);
+  const [backendHealthy, setBackendHealthy] = useState(false);
+  const [backendVersion, setBackendVersion] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "update_available" | "update_not_available" | "downloading" | "downloaded" | "error">("idle");
+  const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
   const isDesktop = typeof window !== "undefined" && Boolean(window.keobotDesktop?.isDesktop);
 
   useEffect(() => {
@@ -91,6 +97,7 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
     }
 
     let active = true;
+
     void window.keobotDesktop.getSettings().then((loaded) => {
       if (!active) {
         return;
@@ -101,6 +108,34 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
       setWakeWordPhrasesText(formatWakeWordPhrases(normalized.WAKE_WORD_PHRASES));
       setStatus("Cai dat da tai xong.");
     });
+
+    if (window.keobotDesktop.getAppInfo) {
+      void window.keobotDesktop.getAppInfo().then((info) => {
+        if (active) setAppInfo(info);
+      });
+    }
+
+    if (window.keobotDesktop.getBackendHealth) {
+      void window.keobotDesktop.getBackendHealth().then((health) => {
+        if (active) {
+          setBackendHealthy(health.healthy);
+          setBackendVersion(health.version);
+        }
+      });
+    }
+
+    if (window.keobotDesktop.onUpdateStatus) {
+      const unsub = window.keobotDesktop.onUpdateStatus((status) => {
+        if (!active) return;
+        setUpdateStatus(status.status);
+        if (status.message) setUpdateErrorMessage(status.message);
+        if (status.status === "error" && !status.message) setUpdateErrorMessage("Update check failed");
+      });
+      return () => {
+        active = false;
+        unsub();
+      };
+    }
 
     return () => {
       active = false;
@@ -135,6 +170,33 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
       setStatus("Khong the luu cai dat.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleOpenLogs = async () => {
+    if (window.keobotDesktop?.openLogsFolder) {
+      await window.keobotDesktop.openLogsFolder();
+    }
+  };
+
+  const handleCopyDiagnostics = async () => {
+    const lines: string[] = [];
+    if (appInfo) {
+      lines.push(`App version: ${appInfo.appVersion}`);
+      lines.push(`Build mode: ${appInfo.buildMode}`);
+      if (appInfo.commitHash) lines.push(`Commit: ${appInfo.commitHash.slice(0, 8)}`);
+      lines.push(`Update channel: ${appInfo.updateChannel}`);
+      lines.push(`Publish provider: ${appInfo.publishProvider || "none"}`);
+    }
+    lines.push(`Backend healthy: ${backendHealthy}`);
+    if (backendVersion) lines.push(`Backend version: ${backendVersion}`);
+    lines.push(`Update status: ${updateStatus}`);
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setStatus("Khong the copy.");
     }
   };
 
@@ -440,6 +502,78 @@ export function SettingsPanel({ onClose, onSaved }: SettingsPanelProps) {
               },
               "Local timezone lookup test query",
             )}
+          </div>
+        </section>
+
+        <section className="settings-group">
+          <h3>Diagnostics & About</h3>
+          <div className="settings-fields">
+            {appInfo && (
+              <>
+                <div className="settings-field">
+                  <span>App version</span>
+                  <code>{appInfo.appVersion}</code>
+                </div>
+                <div className="settings-field">
+                  <span>Build mode</span>
+                  <code>{appInfo.buildMode}</code>
+                </div>
+                <div className="settings-field">
+                  <span>Backend health</span>
+                  <code className={backendHealthy ? "status-ok" : "status-error"}>
+                    {backendHealthy ? "Healthy" : "Unreachable"}
+                  </code>
+                </div>
+                {appInfo.commitHash && (
+                  <div className="settings-field">
+                    <span>Commit</span>
+                    <code>{appInfo.commitHash.slice(0, 8)}</code>
+                  </div>
+                )}
+                <div className="settings-field">
+                  <span>Update channel</span>
+                  <code>{appInfo.updateChannel}</code>
+                </div>
+                <div className="settings-field">
+                  <span>Publish provider</span>
+                  <code>{appInfo.publishProvider || "none"}</code>
+                </div>
+                {backendVersion && (
+                  <div className="settings-field">
+                    <span>Backend version</span>
+                    <code>{backendVersion}</code>
+                  </div>
+                )}
+              </>
+            )}
+            <div className="settings-field">
+              <span>Logs folder</span>
+              <button className="action-button secondary" type="button" onClick={handleOpenLogs}>
+                Open logs folder
+              </button>
+            </div>
+            <div className="settings-field">
+              <span>Copy diagnostics</span>
+              <button className="action-button secondary" type="button" onClick={handleCopyDiagnostics}>
+                {copied ? "Copied!" : "Copy diagnostics"}
+              </button>
+            </div>
+            <div className="settings-field">
+              <span>Auto update</span>
+              <div>
+                {updateStatus === "idle" && (
+                  appInfo?.publishProvider
+                    ? <span className="muted-copy">Ready to check updates</span>
+                    : <span className="muted-copy">Auto update is not configured for this build.</span>
+                )}
+                {updateStatus === "checking" && <span>Checking for updates...</span>}
+                {updateStatus === "update_available" && <span className="status-ok">Update available</span>}
+                {updateStatus === "update_not_available" && <span className="muted-copy">You have the latest version</span>}
+                {updateStatus === "downloading" && <span>Downloading...</span>}
+                {updateStatus === "downloaded" && <span className="status-ok">Update downloaded</span>}
+                {updateStatus === "error" && <span className="status-error">{updateErrorMessage || "Update error"}</span>}
+              </div>
+            </div>
           </div>
         </section>
 

@@ -216,6 +216,13 @@ The frontend defaults to `http://localhost:8000`. Override with:
 VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
+## v1.3 — Diagnostics
+
+- `src/utils/diagnostics.ts` — in-memory diagnostic event log with forwarding to main process
+- `logDiagnostic()` called at voice session transitions, audio playback events, wake word detections
+- Diagnostics & About section in SettingsPanel shows app version, build mode, backend health, logs folder
+- Update status UI (idle/checking/update_available/update_not_available/downloading/downloaded/error)
+
 ## Known Limitations
 
 - This is not full streaming realtime conversation.

@@ -193,6 +193,16 @@ Allowed memory keys:
 - Notifications appear while the desktop app is running, even when the window is hidden to tray.
 - Due reminders are polled from the local backend on a timer.
 
+## v1.3 — Diagnostics & Logging
+
+- Structured logs at `%APPDATA%/KeoBot/logs/` (main, backend, wake-word, update)
+- Daily-rotated log files with API key redaction
+- Uncaught exception / unhandled rejection logging
+- Backend process stdout/stderr piped to log file
+- Desktop IPC bridges: `getAppInfo`, `logDiagnostic`, `openLogsFolder`, `checkForUpdates`
+- `electron-updater` installed; disabled when no publish provider is configured
+- Release artifact validation: `npm run validate:artifacts`
+
 ## Known Limitations
 
 - Auto conversation is near-realtime, not full streaming realtime.
@@ -203,3 +213,17 @@ Allowed memory keys:
 - When a tool is not configured, Kẹo Thông Minh should report that clearly instead of inventing data.
 - Currency can still answer with a demo rate when live exchange-rate configuration is missing.
 - Memory is local-only and does not sync to cloud storage.
+- Auto-updater requires publish provider configuration (GitHub releases, S3, etc.) in `package.json` build.publish.
+
+## v1.4 — Release Pipeline & Auto Update
+
+- **GitHub Releases pipeline**: `.github/workflows/release.yml` (manual `workflow_dispatch`)
+  - Builds all artifacts, runs all validations, publishes to GitHub as draft
+  - Secrets: `GITHUB_TOKEN` (auto-provided by GitHub Actions)
+- **Local pre-release validation**: `npm run prepare:release`
+  - Version consistency, publish config, artifact patterns, token check, deps, dist, git tag
+- **Update metadata validation**: `npm run check:updates`
+  - Validates `latest.yml`, sha512, installer exe match
+- **Publish config**: GitHub provider, `releaseType: "draft"` — no automatic notifications
+- **UI behavior**: Settings panel shows "Ready to check updates" when publish is configured, "Auto update is not configured for this build" when publish is null
+- **Diagnostics**: Exposes `publishProvider`, `updateChannel`, `backendVersion` in Settings

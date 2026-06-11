@@ -514,3 +514,113 @@ npm run smoke:packaged
 3. Say `Nho rang thanh pho mac dinh cua minh la Ha Noi`.
 4. Ask `Thoi tiet hom nay the nao?` and confirm the backend applies the remembered city as its default.
 5. Say `Xoa thanh pho mac dinh cua minh`.
+
+## v1.3 — Release Hardening, Auto Update & Crash Diagnostics
+
+### Diagnostics & Logging
+
+All structured logs are written to the app's user data directory:
+- `%APPDATA%/KeoBot/logs/main/` — main process events (start/quit, backend spawn/exit, tray actions, hotkeys)
+- `%APPDATA%/KeoBot/logs/backend/` — backend stdout/stderr piped from Electron
+- `%APPDATA%/KeoBot/logs/wake-word/` — wake word engine state changes
+- `%APPDATA%/KeoBot/logs/update/` — auto-updater events
+
+Logs are timestamped, have levels (debug/info/warn/error), and use daily rotation with a 5 MB max per day. Sensitive values (API keys, tokens) are redacted automatically.
+
+### Crash Handling
+
+- Uncaught exceptions and unhandled promise rejections in the main process are logged.
+- Backend process exit code and signal are logged.
+- Renderer can forward diagnostic events to the main process logger via `keobot:logDiagnostic` IPC.
+- Electron's crash reporter is available but not enabled by default (no remote upload).
+
+### Diagnostics UI
+
+A "Diagnostics & About" section is available in the Settings panel:
+- App version, build mode, commit hash
+- Backend health status
+- Open logs folder button
+- Copy diagnostics summary button
+- Auto-update status indicator
+
+### Auto Update Structure
+
+- `electron-updater` is installed and configured.
+- The updater is disabled when no publish provider is configured (publish: null in package.json).
+- When enabled, the updater emits events: checking, update_available, update_not_available, downloading, downloaded, error.
+- UI in Settings shows update status.
+- Update check/download/install is manual (autoDownload: false).
+- See `docs/RELEASE_CHECKLIST.md` for release process.
+
+### Release Validation
+
+- `scripts/validate_release_artifacts.js` checks: portable exe, setup exe, backend exe in resources, mascot assets, no .env files, native modules, no hardcoded API keys.
+- Run with: `cd desktop && npm run validate:artifacts`
+
+### Test Coverage Added
+
+- `test_diagnostics.py` — health response version/mode, API key redaction patterns
+
+### Files Changed (v1.3)
+
+| File | Change |
+|---|---|
+| `desktop/services/logger.js` | New — structured logger with rotation and redaction |
+| `desktop/main.js` | Logger integration, crash handlers, backend logging, auto-updater, diagnostics IPC |
+| `desktop/preload.js` | New bridges for getAppInfo, logDiagnostic, openLogsFolder, update events |
+| `desktop/package.json` | Added electron-updater, services files, publish: null, validate scripts |
+| `desktop/scripts/validate_release_artifacts.js` | New — 9-point asset/security check |
+| `frontend/src/utils/diagnostics.ts` | New — diagnostic events logger |
+| `frontend/src/utils/audioPlaybackController.ts` | Import diagnostics helper |
+| `frontend/src/App.tsx` | Diagnostic logging for voice session, wake word, audio playback |
+| `frontend/src/components/SettingsPanel.tsx` | Diagnostics & About section |
+| `frontend/src/desktop.d.ts` | Type definitions for new IPC bridges |
+| `backend/app/schemas.py` | Health response includes version and mode |
+| `backend/app/main.py` | /health returns dynamic version/mode |
+| `backend/tests/test_diagnostics.py` | New — health and redaction tests |
+| `docs/MANUAL_QA_CHECKLIST.md` | New — 13-item manual QA checklist |
+| `docs/RELEASE_CHECKLIST.md` | New — full release process checklist |
+
+## v1.4 — GitHub Releases Pipeline & Auto Update Publishing
+
+### Release Pipeline
+
+- **GitHub Actions workflow**: `.github/workflows/release.yml` (manual `workflow_dispatch`)
+  - Builds backend exe, frontend, desktop package
+  - Runs all validations (backend tests + frontend typecheck/build + desktop build + artifact validation + smoke)
+  - Uploads artifacts to GitHub Releases as a **draft** release
+  - No tokens in config — uses `${{ secrets.GITHUB_TOKEN }}`
+- **Local validation**: `cd desktop && npm run prepare:release` (run before committing version bump)
+  - Checks version consistency across packages
+  - Verifies publish config, artifact patterns, no hardcoded tokens
+  - Verifies electron-updater is installed
+  - Verifies backend/frontend dist exist
+  - Verifies git tag matches version
+- **Update metadata**: `cd desktop && npm run check:updates`
+  - Validates `latest.yml` has correct version, path, sha512
+  - Verifies matching installer exe exists
+  - Checks for token leaks in metadata
+
+### Auto Update Behavior
+
+- `publishProvider` is detected at runtime via `hasPublishConfig()` (checks `package.json build.publish` for GitHub provider)
+- When `publishProvider` is set: Settings panel shows "Ready to check updates" at idle
+- When `publishProvider` is null (dev builds): Settings panel shows "Auto update is not configured for this build."
+- `updateChannel` ("stable") is exposed in diagnostics
+- `backendVersion` is fetched from `/health` at startup and shown in diagnostics
+- `releaseType: "draft"` ensures no automatic notifications to subscribers
+
+### Files Changed (v1.4)
+
+| File | Change |
+|---|---|
+| `.github/workflows/release.yml` | New — GitHub Actions release workflow |
+| `desktop/package.json` | Updated publish from null to GitHub Releases config; added scripts |
+| `desktop/main.js` | Added `hasPublishConfig()`, `publishProvider`/`updateChannel` to getAppInfo; improved update:check handler |
+| `desktop/preload.js` | No changes needed (already proxies getAppInfo) |
+| `desktop/scripts/prepare_release.js` | New — pre-build validation (version, config, tokens, deps, dist) |
+| `desktop/scripts/check_update_metadata.js` | New — validates latest.yml, sha512, artifacts |
+| `frontend/src/desktop.d.ts` | Added `publishProvider`, `updateChannel` to getAppInfo type; `version` to getBackendHealth type |
+| `frontend/src/components/SettingsPanel.tsx` | Added publish provider, update channel, backend version to diagnostics; dynamic update status message |
+| `backend/tests/test_distribution.py` | New — 5 test classes for publish config, metadata, updater state, artifacts, workflow |
+| `docs/RELEASE_CHECKLIST.md` | Updated with workflow steps, required secrets, SmartScreen warning, update metadata |

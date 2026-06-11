@@ -1,3 +1,5 @@
+import { logDiagnostic } from "./diagnostics";
+
 type PlaybackState = "idle" | "playing" | "stopped" | "error";
 
 type PlaybackListener = (state: PlaybackState) => void;

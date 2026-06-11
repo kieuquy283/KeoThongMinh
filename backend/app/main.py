@@ -62,7 +62,11 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse()
+    stt = settings.stt_provider
+    llm = settings.llm_provider
+    tts = settings.tts_provider
+    mode = f"{stt}_{llm}"
+    return HealthResponse(version="0.3.0", mode=mode)
 
 
 @app.post("/reminders", response_model=ReminderResponse)

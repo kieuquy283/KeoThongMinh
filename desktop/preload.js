@@ -74,4 +74,22 @@ contextBridge.exposeInMainWorld("keobotDesktop", {
       ipcRenderer.removeListener("localWakeWord:statusChanged", handler);
     };
   },
+
+  // Diagnostics & metadata
+  getAppInfo: () => ipcRenderer.invoke("keobot:getAppInfo"),
+  getBackendHealth: () => ipcRenderer.invoke("keobot:getBackendHealth"),
+  logDiagnostic: (payload) => ipcRenderer.invoke("keobot:logDiagnostic", payload),
+  openLogsFolder: () => ipcRenderer.invoke("keobot:openLogsFolder"),
+
+  // Update events
+  onUpdateStatus: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("update:status", handler);
+    return () => {
+      ipcRenderer.removeListener("update:status", handler);
+    };
+  },
+  checkForUpdates: () => ipcRenderer.invoke("update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("update:download"),
+  quitAndInstall: () => ipcRenderer.invoke("update:quitAndInstall"),
 });

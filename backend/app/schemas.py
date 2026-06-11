@@ -14,6 +14,8 @@ ToolUsed = Literal["weather", "time", "currency", "news_search", "general_search
 class HealthResponse(BaseModel):
     status: str = "ok"
     service: str = "Kẹo Thông Minh Voice Pipeline"
+    version: str = "0.3.0"
+    mode: str = "local_mock"
 
 
 class TextChatRequest(BaseModel):

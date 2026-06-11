@@ -1,3 +1,4 @@
+import type { DiagnosticEvent } from "./utils/diagnostics";
 import type { KeoBotReminder, KeoBotSettings, WakeWordState, WakeWordStatus } from "./types";
 
 declare global {
@@ -5,6 +6,9 @@ declare global {
     keobotDesktop?: {
       platform: string;
       isDesktop: boolean;
+      appVersion?: string;
+      buildMode?: string;
+      commitHash?: string;
       getSettings: () => Promise<KeoBotSettings>;
       saveSettings: (settings: KeoBotSettings) => Promise<{ ok: boolean }>;
       getStartWithWindows: () => Promise<{ enabled: boolean }>;
@@ -27,6 +31,30 @@ declare global {
       stopLocalWakeWord: () => Promise<{ ok: boolean }>;
       getLocalWakeWordStatus: () => Promise<WakeWordState>;
       onLocalWakeWordStatusChanged: (callback: (status: WakeWordState) => void) => () => void;
+      // Diagnostics & metadata
+      getAppInfo: () => Promise<{
+        appVersion: string;
+        buildMode: string;
+        commitHash: string;
+        updateChannel: string;
+        publishProvider: string | null;
+        electronVersion: string;
+        nodeVersion: string;
+        chromeVersion: string;
+      }>;
+      getBackendHealth: () => Promise<{ healthy: boolean; version: string | null }>;
+      logDiagnostic: (payload: { category: string; message: string; meta?: Record<string, unknown> }) => Promise<void>;
+      openLogsFolder: () => Promise<{ ok: boolean }>;
+      // Update events
+      onUpdateStatus: (callback: (status: {
+        status: "idle" | "checking" | "update_available" | "update_not_available" | "downloading" | "downloaded" | "error";
+        info?: unknown;
+        progress?: unknown;
+        message?: string;
+      }) => void) => () => void;
+      checkForUpdates: () => Promise<{ ok: boolean; error?: string }>;
+      downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
+      quitAndInstall: () => Promise<{ ok: boolean; error?: string }>;
     };
   }
 }

@@ -14,7 +14,11 @@
     "rebuild": "electron-rebuild -f -w @picovoice/porcupine-node @picovoice/pvrecorder-node",
     "build": "electron-builder",
     "pack": "electron-builder --dir",
-    "smoke:packaged": "node scripts/smoke_packaged_app.js"
+    "smoke:packaged": "node scripts/smoke_packaged_app.js",
+    "validate:artifacts": "node scripts/validate_release_artifacts.js",
+    "validate:all": "node scripts/validate_release_artifacts.js",
+    "check:updates": "node scripts/check_update_metadata.js",
+    "prepare:release": "node scripts/prepare_release.js"
   },
   "build": {
     "appId": "com.keobot.desktop",
@@ -26,11 +30,18 @@
       "main.js",
       "preload.js",
       "localWakeWord.js",
+      "services/**/*",
       "package.json",
       "node_modules/@picovoice/**/*",
       "node_modules/@picovoice/.package-lock.json",
       "../frontend/dist/**/*"
     ],
+    "publish": [{
+      "provider": "github",
+      "owner": "kieuquy283",
+      "repo": "KeoThongMinh",
+      "releaseType": "draft"
+    }],
     "extraResources": [
       {
         "from": "../backend/dist",
@@ -66,6 +77,7 @@
   },
   "dependencies": {
     "@picovoice/porcupine-node": "^4.0.2",
-    "@picovoice/pvrecorder-node": "^1.2.9"
+    "@picovoice/pvrecorder-node": "^1.2.9",
+    "electron-updater": "^6.8.9"
   }
 }

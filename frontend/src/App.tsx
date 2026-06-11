@@ -12,6 +12,7 @@ import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
 import { mapAppStateToMascot } from "./utils/keobotMascotState";
 import { voiceStatusToSessionState, getSessionLabel, isIdle, canInterrupt } from "./utils/voiceSessionState";
 import { play as audioPlay, stop as audioStop, isPlaying as audioIsPlaying, subscribe as audioSubscribe } from "./utils/audioPlaybackController";
+import { logDiagnostic } from "./utils/diagnostics";
 import type {
   AutoConversationStatus,
   ConversationMode,
@@ -148,7 +149,10 @@ export default function App() {
     }
 
     const unsubscribe = window.keobotDesktop.onWakeWordDetected((phrase) => {
+      logDiagnostic("wake_word", "Wake word detected", { phrase, wasSpeaking: audioIsPlaying() });
+
       if (isRequestInFlightRef.current) {
+        logDiagnostic("wake_word", "Wake word ignored — request in flight");
         return;
       }
 
@@ -156,6 +160,7 @@ export default function App() {
       setHandsfreeMessage(phrase ? `Kẹo Thông Minh đã nghe bạn gọi: ${phrase}` : "Kẹo Thông Minh đã nghe bạn gọi.");
 
       if (audioIsPlaying()) {
+        logDiagnostic("audio_playback", "Audio stopped by wake word");
         audioStop();
         setSessionState("command_listening");
         setStatus("recording");
@@ -194,7 +199,10 @@ export default function App() {
     }
 
     const unsubscribeStart = window.keobotDesktop.onStartListening(() => {
+      logDiagnostic("voice_session", "Desktop requested start listening", { isWakeWordTurn: wakeWordCommandPendingRef.current });
+
       if (isRequestInFlightRef.current) {
+        logDiagnostic("voice_session", "Start listening ignored — request in flight");
         return;
       }
 
@@ -205,6 +213,7 @@ export default function App() {
       }
 
       if (audioIsPlaying()) {
+        logDiagnostic("audio_playback", "Audio stopped by hotkey start");
         audioStop();
         setSessionState("command_listening");
         setStatus("recording");
@@ -226,6 +235,7 @@ export default function App() {
     });
 
     const unsubscribeStop = window.keobotDesktop.onStopListening(() => {
+      logDiagnostic("voice_session", "Desktop requested stop listening");
       wakeWordCommandPendingRef.current = false;
       setHandsfreeMessage(null);
       stopResponseAudio();
@@ -305,6 +315,7 @@ export default function App() {
       return;
     }
 
+    logDiagnostic("audio_playback", "Playing response audio", { url });
     setAudioBlocked(false);
     setStatus("speaking");
     setSessionState("speaking");
@@ -312,6 +323,7 @@ export default function App() {
     try {
       await audioPlay(url);
       if (!audioIsPlaying()) {
+        logDiagnostic("audio_playback", "Audio playback finished");
         setAudioBlocked(false);
         setStatus("idle");
         setSessionState((current) => (current === "interrupted" ? "interrupted" : "idle"));
@@ -320,6 +332,7 @@ export default function App() {
         }
       }
     } catch {
+      logDiagnostic("audio_playback", "Audio playback error");
       setAudioBlocked(true);
       setError("Không thể phát file audio phản hồi.");
       setStatus("error");
@@ -328,6 +341,7 @@ export default function App() {
   };
 
   const stopResponseAudio = (reason: "manual" | "interrupt" = "manual") => {
+    logDiagnostic("audio_playback", `Audio stopped (${reason})`);
     audioStop();
     setAudioBlocked(false);
     setSessionState("interrupted");
@@ -340,6 +354,7 @@ export default function App() {
   const interruptForNewTurn = useCallback(() => {
     const wasSpeaking = audioIsPlaying();
     if (wasSpeaking) {
+      logDiagnostic("audio_playback", "Audio stopped by interruptForNewTurn");
       audioStop();
     }
     if (wakeWord.enabled) {
