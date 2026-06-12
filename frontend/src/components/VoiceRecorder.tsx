@@ -225,7 +225,12 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
       return;
     }
 
-    if (sessionState === "uploading" || sessionState === "thinking" || sessionState === "speaking") {
+    if (sessionState === "uploading" || sessionState === "thinking") {
+      return;
+    }
+
+    if (sessionState === "speaking") {
+      onStopSpeaking?.();
       return;
     }
 

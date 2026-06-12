@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,12 +14,18 @@ from app.config import get_settings
 from app import data_paths
 from app.data_paths import ensure_data_dirs, get_static_dir
 from app.schemas import (
+    DocumentContentResponse,
     HealthResponse,
     ImportPathRequest,
     KnowledgeAnswerResponse,
     KnowledgeChunk,
     KnowledgeClearRequest,
     KnowledgeDocument,
+    KnowledgeExportResponse,
+    KnowledgeExportRecord,
+    KnowledgeImportRequest,
+    KnowledgeImportResponse,
+    KnowledgeSearchRequest,
     KnowledgeSearchResult,
     MemoryClearResponse,
     MemoryContextResponse,
@@ -56,7 +65,31 @@ from app.tools.time_tool import get_time_info
 from app.tools.weather_tool import get_weather_info
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_periodic_session_cleanup())
+    yield
+    task.cancel()
+
+
+async def _periodic_session_cleanup() -> None:
+    from app.services.conversation_context import get_conversation_manager
+    from app.services.voice_session_manager import cleanup_session, get_active_session_ids
+    while True:
+        await asyncio.sleep(300)
+        try:
+            mgr = get_conversation_manager()
+            mgr.force_cleanup()
+            for sid in get_active_session_ids():
+                cleanup_session(sid)
+        except Exception:
+            logger = logging.getLogger("keobot.session_cleanup")
+            logger.exception("Session cleanup error")
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 allowed_origins = {
     settings.frontend_origin,
@@ -300,8 +333,19 @@ async def delete_knowledge_document(document_id: int) -> dict[str, Any]:
 
 
 @app.post("/knowledge/search", response_model=KnowledgeSearchResult)
-async def search_knowledge(query: str, limit: int = 5) -> KnowledgeSearchResult:
-    chunks = get_knowledge_store().search_chunks(query, limit=limit)
+async def search_knowledge(
+    query: str = "",
+    limit: int = 5,
+    mode: str = "hybrid",
+    payload: KnowledgeSearchRequest | None = None,
+) -> KnowledgeSearchResult:
+    if payload is not None:
+        query = payload.query
+        limit = payload.limit
+        mode = payload.mode
+    if mode not in ("keyword", "semantic", "hybrid"):
+        mode = "hybrid"
+    chunks = get_knowledge_store().hybrid_search_chunks(query, limit=limit, mode=mode)
     return KnowledgeSearchResult(
         query=query,
         results=[KnowledgeChunk(**c) for c in chunks],
@@ -310,9 +354,14 @@ async def search_knowledge(query: str, limit: int = 5) -> KnowledgeSearchResult:
 
 
 @app.post("/knowledge/ask", response_model=KnowledgeAnswerResponse)
-async def ask_knowledge(query: str) -> KnowledgeAnswerResponse:
+async def ask_knowledge(
+    query: str,
+    mode: str = "hybrid",
+) -> KnowledgeAnswerResponse:
     from app.services.knowledge_query import answer_from_knowledge
-    result = await answer_from_knowledge(query)
+    if mode not in ("keyword", "semantic", "hybrid"):
+        mode = "hybrid"
+    result = await answer_from_knowledge(query, mode=mode)
     return KnowledgeAnswerResponse(**result)
 
 
@@ -321,9 +370,112 @@ async def clear_knowledge(payload: KnowledgeClearRequest | None = None) -> dict[
     if payload and not payload.confirm:
         return {"ok": False, "error": "Confirmation required. Set confirm=true to clear all knowledge."}
     deleted = get_knowledge_store().clear_knowledge_base()
-    import logging
-    logging.getLogger("keobot.knowledge").info("Knowledge base cleared via API: %d documents", deleted)
+    logger = logging.getLogger("keobot.knowledge")
+    logger.info("Knowledge base cleared via API: %d documents", deleted)
     return {"ok": True, "documents_deleted": deleted}
+
+
+@app.get("/knowledge/documents/{document_id}/content", response_model=DocumentContentResponse)
+async def get_knowledge_document_content(document_id: int) -> DocumentContentResponse:
+    store = get_knowledge_store()
+    doc = store.get_document(document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    content = store.get_document_text(document_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="No content found for this document.")
+    return DocumentContentResponse(
+        id=doc["id"],
+        original_filename=doc["original_filename"],
+        file_type=doc["file_type"],
+        content=content,
+    )
+
+
+@app.get("/knowledge/export", response_model=KnowledgeExportResponse)
+async def export_knowledge() -> KnowledgeExportResponse:
+    from datetime import datetime, timezone
+    store = get_knowledge_store()
+    documents = store.list_documents()
+    records = []
+    for doc in documents:
+        doc_id = doc["id"]
+        chunks = store.get_chunks_for_document(doc_id)
+        records.append(
+            KnowledgeExportRecord(
+                document=KnowledgeDocument(**doc),
+                chunks=[KnowledgeChunk(**c) for c in chunks],
+            )
+        )
+    return KnowledgeExportResponse(
+        exported_at=datetime.now(timezone.utc).isoformat(),
+        records=records,
+    )
+
+
+@app.post("/knowledge/import", response_model=KnowledgeImportResponse)
+async def import_knowledge(payload: KnowledgeImportRequest) -> KnowledgeImportResponse:
+    from app.services.document_importer import import_document
+    store = get_knowledge_store()
+    errors: list[str] = []
+    docs_found = len(payload.records)
+    docs_imported = 0
+    chunks_imported = 0
+    for record in payload.records:
+        doc_data = record.document.model_dump()
+        existing = store.get_document_by_sha256(doc_data["sha256"])
+        if existing is not None:
+            if payload.mode == "replace":
+                store.delete_document(existing["id"])
+            else:
+                errors.append(
+                    f"Duplicate document: {doc_data['original_filename']} (SHA256: {doc_data['sha256'][:12]}...)"
+                )
+                continue
+        from app.data_paths import get_documents_dir
+        import hashlib
+        import uuid
+        ext = f".{doc_data['file_type']}"
+        safe_name = f"{uuid.uuid4().hex}{ext}"
+        from pathlib import Path
+        stored_path = get_documents_dir() / safe_name
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        chunk_texts = [c.text for c in record.chunks]
+        full_text = "\n\n".join(chunk_texts)
+        raw_bytes = full_text.encode("utf-8")
+        stored_path.write_bytes(raw_bytes)
+        doc = store.add_document(
+            filename=safe_name,
+            original_filename=doc_data["original_filename"],
+            file_type=doc_data["file_type"],
+            size_bytes=doc_data.get("size_bytes", len(raw_bytes)),
+            sha256=doc_data["sha256"],
+            stored_path=str(stored_path),
+        )
+        doc_id = doc["id"]
+        chunks_data = [
+            {
+                "text": c.text,
+                "source_title": c.source_title or doc_data["original_filename"],
+                "source_location": c.source_location,
+                "token_estimate": c.token_estimate,
+            }
+            for c in record.chunks
+        ]
+        store.add_chunks(doc_id, chunks_data)
+        docs_imported += 1
+        chunks_imported += len(record.chunks)
+    log = logging.getLogger("keobot.knowledge")
+    log.info(
+        "Knowledge import: found=%d imported=%d chunks=%d errors=%d",
+        docs_found, docs_imported, chunks_imported, len(errors),
+    )
+    return KnowledgeImportResponse(
+        documents_found=docs_found,
+        documents_imported=docs_imported,
+        chunks_imported=chunks_imported,
+        errors=errors,
+    )
 
 
 @app.post("/reminders/{reminder_id}/triggered", response_model=ReminderResponse)
@@ -337,7 +489,7 @@ async def mark_reminder_triggered(reminder_id: int) -> ReminderResponse:
 @app.post("/text-chat", response_model=TextChatResponse)
 async def text_chat(payload: TextChatRequest) -> TextChatResponse:
     try:
-        chat_response = await generate_chat_response(payload.message)
+        chat_response = await generate_chat_response(payload.message, session_id=payload.session_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -355,9 +507,12 @@ async def text_chat(payload: TextChatRequest) -> TextChatResponse:
 
 
 @app.post("/voice-chat", response_model=VoiceChatResponse)
-async def voice_chat(audio: UploadFile = File(...)) -> VoiceChatResponse:
+async def voice_chat(
+    audio: UploadFile = File(...),
+    session_id: str | None = None,
+) -> VoiceChatResponse:
     try:
-        result = await run_voice_chat(audio)
+        result = await run_voice_chat(audio, session_id=session_id)
         return VoiceChatResponse(**result)
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -397,6 +552,23 @@ async def cancel_voice_turn(session_id: str):
 @app.get("/voice-turn/sessions")
 async def list_voice_sessions():
     return {"active_sessions": get_active_session_ids()}
+
+
+@app.post("/sessions/cleanup")
+async def cleanup_sessions():
+    from app.services.conversation_context import get_conversation_manager
+    mgr = get_conversation_manager()
+    before = mgr.get_active_session_count()
+    mgr.force_cleanup()
+    voice_ids = get_active_session_ids()
+    for sid in voice_ids:
+        cleanup_session(sid)
+    return {
+        "conversation_sessions_before": before,
+        "conversation_sessions_after": mgr.get_active_session_count(),
+        "voice_sessions_cleaned": len(voice_ids),
+        "cleaned_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/tools/status", response_model=ToolsStatusResponse)

@@ -32,10 +32,12 @@ def app_module(monkeypatch, tmp_path):
         "app.services.entity_extractor",
         "app.services.tool_router",
         "app.services.chat_flow",
+        "app.services.conversation_context",
         "app.services.knowledge_store",
         "app.services.knowledge_query",
         "app.services.document_importer",
         "app.services.text_chunker",
+        "app.services.vector_store",
         "app.services.voice_chat",
         "app.main",
     ):

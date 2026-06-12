@@ -25,6 +25,12 @@ function createRecorder(stream: MediaStream): MediaRecorder {
   return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
 }
 
+function generateSessionId(): string {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function useAutoVoiceConversation(): AutoVoiceConversationResult {
   const [status, setStatus] = useState<AutoConversationStatus>("off");
   const [isActive, setIsActive] = useState(false);
@@ -42,6 +48,7 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
   const speechStateTimerRef = useRef<number | null>(null);
   const ignoreNextResponseRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
   const clearSpeechStateTimer = useCallback(() => {
     if (speechStateTimerRef.current !== null) {
@@ -111,7 +118,7 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
       setStatus("sending");
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
-      const response = await sendVoiceChat(audioBlob, abortController.signal);
+      const response = await sendVoiceChat(audioBlob, abortController.signal, sessionIdRef.current ?? undefined);
       abortControllerRef.current = null;
       if (ignoreNextResponseRef.current) {
         ignoreNextResponseRef.current = false;
@@ -217,6 +224,8 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
       return;
     }
 
+    sessionIdRef.current = generateSessionId();
+
     try {
       const nextStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = nextStream;
@@ -291,6 +300,11 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
     stream,
     enabled: isActive && isDetectingTurn,
     onSpeechStart: () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        audioRef.current = null;
+      }
       setStatus("speech_detected");
       clearSpeechStateTimer();
       speechStateTimerRef.current = window.setTimeout(() => {

@@ -41,14 +41,14 @@ async def _save_upload(audio_file: UploadFile) -> tuple[Path, str]:
     return temp_path, suffix
 
 
-async def run_voice_chat(audio_file: UploadFile) -> dict[str, object]:
+async def run_voice_chat(audio_file: UploadFile, session_id: str | None = None) -> dict[str, object]:
     settings = get_settings()
     temp_path: Path | None = None
 
     try:
         temp_path, _ = await _save_upload(audio_file)
         user_text = await transcribe_audio(str(temp_path))
-        chat_response = await generate_chat_response(user_text)
+        chat_response = await generate_chat_response(user_text, session_id=session_id)
 
         from app.data_paths import get_audio_dir
         audio_dir = get_audio_dir()

@@ -20,6 +20,7 @@ class HealthResponse(BaseModel):
 
 class TextChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    session_id: str | None = None
 
 
 class TextChatResponse(BaseModel):
@@ -252,9 +253,11 @@ class KnowledgeChunk(BaseModel):
     source_title: str | None = None
     source_location: str | None = None
     token_estimate: int = 0
-    created_at: str
+    created_at: str = ""
     document_filename: str = ""
     document_original_filename: str = ""
+    score: float = 0.0
+    citation_index: int = 0
 
 
 class KnowledgeSearchResult(BaseModel):
@@ -276,6 +279,62 @@ class KnowledgeClearRequest(BaseModel):
 
 class ImportPathRequest(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=5, ge=1, le=50)
+    mode: Literal["keyword", "semantic", "hybrid"] = "hybrid"
+
+
+class KnowledgeExportRecord(BaseModel):
+    document: KnowledgeDocument
+    chunks: list[KnowledgeChunk]
+
+
+class KnowledgeExportResponse(BaseModel):
+    schema_version: int = 1
+    exported_at: str
+    app_version: str = ""
+    records: list[KnowledgeExportRecord]
+
+
+class KnowledgeImportRequest(BaseModel):
+    records: list[KnowledgeExportRecord]
+    mode: Literal["merge", "replace"] = "merge"
+
+
+class KnowledgeImportResponse(BaseModel):
+    ok: bool = True
+    documents_found: int = 0
+    documents_imported: int = 0
+    chunks_imported: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class DocumentContentResponse(BaseModel):
+    id: int
+    original_filename: str
+    file_type: str
+    content: str
+
+
+class KnowledgeCitationSource(BaseModel):
+    id: int
+    document_id: int
+    chunk_index: int
+    citation_index: int
+    text: str
+    source_title: str
+    source_location: str | None = None
+    score: float = 0.0
+
+
+class KnowledgeAnswerWithCitationsResponse(BaseModel):
+    query: str
+    answer: str
+    sources: list[KnowledgeCitationSource] = Field(default_factory=list)
+    has_sufficient_context: bool = False
 
 
 TextChatResponse.model_rebuild()

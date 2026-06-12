@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { askKnowledge, clearKnowledge, deleteKnowledgeDocument, importKnowledgeDocument, importKnowledgeDocumentFromPath, listKnowledgeDocuments, searchKnowledge } from "../api";
-import type { KnowledgeAnswer, KnowledgeChunk, KnowledgeDocument } from "../types";
+import { askKnowledge, clearKnowledge, deleteKnowledgeDocument, exportKnowledge, getDocumentContent, importKnowledge, importKnowledgeDocument, importKnowledgeDocumentFromPath, listKnowledgeDocuments, searchKnowledge } from "../api";
+import type { DocumentContent, KnowledgeAnswer, KnowledgeChunk, KnowledgeDocument } from "../types";
 
 interface KnowledgePanelProps {
   onClose: () => void;
@@ -17,7 +17,10 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
   const [searching, setSearching] = useState(false);
   const [asking, setAsking] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<DocumentContent | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
 
   const hasNativePicker = Boolean(window.keobotDesktop?.chooseKnowledgeFiles);
 
@@ -106,6 +109,15 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
     }
   };
 
+  const handlePreview = async (docId: number) => {
+    try {
+      const content = await getDocumentContent(docId);
+      setPreviewDoc(content);
+    } catch {
+      setStatus("Lỗi khi tải nội dung tài liệu.");
+    }
+  };
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
     setSearching(true);
@@ -145,6 +157,51 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
       }
     } catch {
       setStatus("Lỗi khi xóa tất cả tài liệu.");
+    }
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    setStatus("Đang xuất dữ liệu...");
+    try {
+      const result = await exportKnowledge();
+      const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const timestamp = new Date().toISOString().slice(0, 10);
+      a.download = `keobot-knowledge-backup-${timestamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setStatus(`Đã xuất ${result.records.length} tài liệu.`);
+    } catch {
+      setStatus("Lỗi khi xuất dữ liệu.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setStatus("Đang nhập dữ liệu...");
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text) as { records: Array<{ document: KnowledgeDocument; chunks: KnowledgeChunk[] }> };
+      const result = await importKnowledge({ records: data.records, mode: "merge" });
+      setStatus(`Đã nhập: ${result.documents_imported} tài liệu, ${result.chunks_imported} chunks.`);
+      if (result.errors.length > 0) {
+        setStatus(prev => `${prev} Lỗi: ${result.errors[0]}`);
+      }
+      void loadDocuments();
+    } catch {
+      setStatus("Lỗi khi nhập dữ liệu. Định dạng file không hợp lệ.");
+    } finally {
+      setImporting(false);
+      if (importFileInputRef.current) importFileInputRef.current.value = "";
     }
   };
 
@@ -196,6 +253,21 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
               </>
             )}
           </div>
+          <div className="settings-field" style={{ flexDirection: "row", gap: "8px" }}>
+            <button className="action-button secondary" type="button" onClick={handleExport} disabled={exporting || documents.length === 0}>
+              {exporting ? "Đang xuất..." : "Sao lưu dữ liệu"}
+            </button>
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleImportBackup}
+              style={{ display: "none" }}
+            />
+            <button className="action-button secondary" type="button" onClick={() => importFileInputRef.current?.click()} disabled={importing}>
+              Khôi phục từ sao lưu
+            </button>
+          </div>
         </div>
 
         <div className="settings-group">
@@ -216,9 +288,14 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
                     {doc.status === "failed" && <span className="status-error">Failed: {doc.error_message}</span>}
                     {doc.status === "indexed" && <span className="status-ok">Indexed</span>}
                   </div>
-                  <button className="action-button secondary danger" type="button" onClick={() => handleDelete(doc.id, doc.original_filename)}>
-                    Xóa
-                  </button>
+                  <div className="knowledge-doc-actions" style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                    <button className="action-button secondary" type="button" onClick={() => handlePreview(doc.id)}>
+                      Xem
+                    </button>
+                    <button className="action-button secondary danger" type="button" onClick={() => handleDelete(doc.id, doc.original_filename)}>
+                      Xóa
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -232,19 +309,39 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
           )}
         </div>
 
+        {previewDoc && (
+          <div className="settings-group">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <h3 style={{ margin: 0 }}>Xem trước: {previewDoc.original_filename}</h3>
+              <button className="action-button secondary" type="button" onClick={() => setPreviewDoc(null)}>
+                Đóng
+              </button>
+            </div>
+            <div className="knowledge-preview-content" style={{ maxHeight: "400px", overflowY: "auto", padding: "12px", background: "var(--bg)", borderRadius: "8px", fontSize: "0.9rem", lineHeight: "1.6", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              {previewDoc.content}
+            </div>
+          </div>
+        )}
+
         <div className="settings-group">
           <h3>Tìm kiếm trong tài liệu</h3>
           <div className="settings-field">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(); }}
-              placeholder="Nhập từ khóa..."
-            />
-            <button className="action-button secondary" type="button" onClick={handleSearch} disabled={searching}>
-              {searching ? "Đang tìm..." : "Tìm"}
-            </button>
+            <div className="settings-field" style={{ display: "flex", gap: "8px", flexDirection: "row" }}>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(); }}
+                placeholder="Nhập từ khóa..."
+                style={{ flex: 1 }}
+              />
+              <button className="action-button secondary" type="button" onClick={handleSearch} disabled={searching}>
+                {searching ? "Đang tìm..." : "Tìm"}
+              </button>
+            </div>
+            <span className="muted-copy" style={{ fontSize: "0.8rem" }}>
+              Tìm kiếm kết hợp: từ khóa + ngữ nghĩa
+            </span>
           </div>
           {searchResults.length > 0 && (
             <div className="knowledge-search-results">
@@ -265,16 +362,22 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
           <h3>Hỏi tài liệu</h3>
           <p className="muted-copy">Đặt câu hỏi dựa trên nội dung tài liệu đã import.</p>
           <div className="settings-field">
-            <input
-              type="text"
-              value={askQuery}
-              onChange={(e) => setAskQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void handleAsk(); }}
-              placeholder="Ví dụ: CV của tôi có gì?"
-            />
-            <button className="action-button secondary" type="button" onClick={handleAsk} disabled={asking}>
-              {asking ? "Đang hỏi..." : "Hỏi"}
-            </button>
+            <div className="settings-field" style={{ display: "flex", gap: "8px", flexDirection: "row" }}>
+              <input
+                type="text"
+                value={askQuery}
+                onChange={(e) => setAskQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void handleAsk(); }}
+                placeholder="Ví dụ: CV của tôi có gì?"
+                style={{ flex: 1 }}
+              />
+              <button className="action-button secondary" type="button" onClick={handleAsk} disabled={asking}>
+                {asking ? "Đang hỏi..." : "Hỏi"}
+              </button>
+            </div>
+            <span className="muted-copy" style={{ fontSize: "0.8rem" }}>
+              Trả lời bằng hybrid search (từ khóa + ngữ nghĩa) kèm trích dẫn nguồn
+            </span>
           </div>
           {answer && (
             <div className="knowledge-answer">
@@ -282,9 +385,9 @@ export function KnowledgePanel({ onClose }: KnowledgePanelProps) {
               {answer.sources.length > 0 && (
                 <details>
                   <summary>Nguồn ({answer.sources.length})</summary>
-                  {answer.sources.map((source) => (
+                  {answer.sources.map((source, idx) => (
                     <div key={`${source.document_id}-${source.chunk_index}`} className="knowledge-source">
-                      <strong>{source.source_title}</strong>
+                      <strong>[{idx + 1}] {source.source_title}</strong>
                       <p className="muted-copy">{source.text.slice(0, 300)}...</p>
                     </div>
                   ))}

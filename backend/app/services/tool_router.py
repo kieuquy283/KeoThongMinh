@@ -27,7 +27,7 @@ SEARCH_HINTS = ("tim thong tin moi", "tim thong tin", "cap nhat", "tra cuu", "se
 TOOL_CONFIDENCE_THRESHOLD = 0.65
 
 
-def detect_tool_intent(user_text: str) -> ToolRoute:
+def detect_tool_intent(user_text: str, context_turns: list[dict[str, str]] | None = None) -> ToolRoute:
     normalized = _normalize_text(user_text)
     entities = extract_entities(user_text)
 
@@ -39,6 +39,12 @@ def detect_tool_intent(user_text: str) -> ToolRoute:
         _score_search(normalized, entities),
     ]
     best_intent, best_confidence = max(candidates, key=lambda item: item[1])
+
+    if best_confidence < TOOL_CONFIDENCE_THRESHOLD and context_turns:
+        prev_intent = _detect_prev_tool_intent(context_turns)
+        if prev_intent != "none":
+            best_intent = prev_intent
+            best_confidence = 0.66
 
     if best_confidence < TOOL_CONFIDENCE_THRESHOLD:
         return ToolRoute(intent="none", confidence=best_confidence, entities=entities, query=user_text.strip())
@@ -94,6 +100,24 @@ def _score_search(normalized: str, entities: dict[str, Any]) -> tuple[ToolIntent
     if entities.get("search_query"):
         return "general_search", 0.9
     return "general_search", 0.68
+
+
+def _detect_prev_tool_intent(turns: list[dict[str, str]]) -> ToolIntent:
+    for t in reversed(turns):
+        if t["role"] == "user":
+            prev_text = t["text"]
+            prev_normalized = _normalize_text(prev_text)
+            if any(hint in prev_normalized for hint in WEATHER_HINTS):
+                return "weather"
+            if any(hint in prev_normalized for hint in TIME_HINTS):
+                return "time"
+            if any(hint in prev_normalized for hint in CURRENCY_HINTS):
+                return "currency"
+            if any(hint in prev_normalized for hint in NEWS_HINTS):
+                return "news_search"
+            if any(hint in prev_normalized for hint in SEARCH_HINTS):
+                return "general_search"
+    return "none"
 
 
 def _normalize_text(value: str) -> str:

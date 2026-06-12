@@ -7,7 +7,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 logger = logging.getLogger("keobot.knowledge")
+
+RRF_K = 60.0
 
 
 def get_default_db_path() -> Path:
@@ -142,6 +146,8 @@ class KnowledgeStore:
         doc = self.get_document(doc_id)
         if doc is None:
             return False
+        from app.services.vector_store import get_vector_store
+        get_vector_store().remove_vectors_by_document(doc_id, store=self)
         stored_path = doc["stored_path"]
         with self._connect() as conn:
             conn.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
@@ -153,18 +159,24 @@ class KnowledgeStore:
 
     def add_chunks(self, doc_id: int, chunks: list[dict[str, Any]]) -> int:
         now = datetime.now(timezone.utc).isoformat()
-        count = 0
+        chunk_ids: list[int] = []
         with self._connect() as conn:
             for i, chunk in enumerate(chunks):
-                conn.execute(
+                cursor = conn.execute(
                     """
                     INSERT INTO chunks (document_id, chunk_index, text, source_title, source_location, token_estimate, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (doc_id, i, chunk["text"], chunk.get("source_title"), chunk.get("source_location"), chunk.get("token_estimate", 0), now),
                 )
-                count += 1
+                chunk_ids.append(cursor.lastrowid)
+        count = len(chunk_ids)
         self.update_document_status(doc_id, "indexed", chunk_count=count)
+        from app.services.vector_store import get_vector_store
+        try:
+            get_vector_store().add_vectors(chunk_ids, [c["text"] for c in chunks])
+        except Exception as exc:
+            logger.warning("Vector indexing failed for doc_id=%d: %s", doc_id, exc)
         logger.info("Chunks added: doc_id=%d count=%d", doc_id, count)
         return count
 
@@ -203,12 +215,149 @@ class KnowledgeStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_all_chunks(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.id, c.document_id, c.chunk_index, c.text, c.source_title, c.source_location, c.token_estimate, c.created_at,
+                       d.filename AS document_filename, d.original_filename AS document_original_filename, d.file_type, d.stored_path
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                ORDER BY c.document_id, c.chunk_index
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_chunk_ids_for_document(self, document_id: int) -> list[int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM chunks WHERE document_id = ?", (document_id,)
+            ).fetchall()
+        return [row["id"] for row in rows]
+
+    def get_chunks_for_document(self, document_id: int) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chunks WHERE document_id = ? ORDER BY chunk_index",
+                (document_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_document_text(self, document_id: int) -> str | None:
+        chunks = self.get_chunks_for_document(document_id)
+        if not chunks:
+            return None
+        return "\n\n".join(c["text"] for c in chunks)
+
+    def hybrid_search_chunks(
+        self, query: str, limit: int = 5, mode: str = "hybrid"
+    ) -> list[dict[str, Any]]:
+        if mode == "keyword":
+            return self.search_chunks(query, limit=limit)
+        fts_results = self.search_chunks(query, limit=limit * 2)
+        fts_map: dict[int, dict[str, Any]] = {}
+        for rank, r in enumerate(fts_results):
+            cid = r["id"]
+            r["_fts_rank"] = rank
+            r["_fts_score"] = 1.0 / (RRF_K + rank)
+            r["_vector_score"] = 0.0
+            r["_hybrid_score"] = r["_fts_score"]
+            fts_map[cid] = r
+        if mode == "semantic":
+            from app.services.vector_store import get_vector_store
+            vec_store = get_vector_store()
+            vec_results = vec_store.search(query, limit=limit * 2)
+            for rank, vr in enumerate(vec_results):
+                cid = vr["chunk_id"]
+                vec_score = 1.0 / (RRF_K + rank)
+                if cid in fts_map:
+                    fts_map[cid]["_vector_score"] = vec_score
+                    fts_map[cid]["_hybrid_score"] = (
+                        fts_map[cid]["_fts_score"] + vec_score
+                    )
+                else:
+                    with self._connect() as conn:
+                        row = conn.execute(
+                            """
+                            SELECT c.id, c.document_id, c.chunk_index, c.text,
+                                   c.source_title, c.source_location, c.token_estimate, c.created_at,
+                                   d.filename AS document_filename,
+                                   d.original_filename AS document_original_filename,
+                                   d.file_type, d.stored_path
+                            FROM chunks c
+                            JOIN documents d ON c.document_id = d.id
+                            WHERE c.id = ?
+                            """,
+                            (cid,),
+                        ).fetchone()
+                    if row is not None:
+                        r = dict(row)
+                        r["_fts_rank"] = limit * 2
+                        r["_fts_score"] = 0.0
+                        r["_vector_score"] = vec_score
+                        r["_hybrid_score"] = vec_score
+                        fts_map[cid] = r
+            if mode == "semantic":
+                ranked = sorted(
+                    fts_map.values(),
+                    key=lambda x: x["_vector_score"],
+                    reverse=True,
+                )[:limit]
+                for r in ranked:
+                    r["score"] = r["_vector_score"]
+                return ranked
+        if mode == "hybrid":
+            from app.services.vector_store import get_vector_store
+            vec_store = get_vector_store()
+            vec_results = vec_store.search(query, limit=limit * 2)
+            for rank, vr in enumerate(vec_results):
+                cid = vr["chunk_id"]
+                vec_score = 1.0 / (RRF_K + rank)
+                if cid in fts_map:
+                    fts_map[cid]["_vector_score"] = vec_score
+                    fts_map[cid]["_hybrid_score"] = (
+                        fts_map[cid]["_fts_score"] + vec_score
+                    )
+                else:
+                    with self._connect() as conn:
+                        row = conn.execute(
+                            """
+                            SELECT c.id, c.document_id, c.chunk_index, c.text,
+                                   c.source_title, c.source_location, c.token_estimate, c.created_at,
+                                   d.filename AS document_filename,
+                                   d.original_filename AS document_original_filename,
+                                   d.file_type, d.stored_path
+                            FROM chunks c
+                            JOIN documents d ON c.document_id = d.id
+                            WHERE c.id = ?
+                            """,
+                            (cid,),
+                        ).fetchone()
+                    if row is not None:
+                        r = dict(row)
+                        r["_fts_rank"] = limit * 2
+                        r["_fts_score"] = 0.0
+                        r["_vector_score"] = vec_score
+                        r["_hybrid_score"] = vec_score
+                        fts_map[cid] = r
+            ranked = sorted(
+                fts_map.values(),
+                key=lambda x: x["_hybrid_score"],
+                reverse=True,
+            )[:limit]
+            for r in ranked:
+                r["score"] = r["_hybrid_score"]
+            return ranked
+        return fts_results[:limit]
+
     def clear_knowledge_base(self) -> int:
         with self._connect() as conn:
             count_row = conn.execute("SELECT COUNT(*) AS count FROM documents").fetchone()
             count = int(count_row["count"]) if count_row else 0
             conn.execute("DELETE FROM chunks")
             conn.execute("DELETE FROM documents")
+        from app.services.vector_store import get_vector_store
+        get_vector_store().clear()
         logger.info("Knowledge base cleared: %d documents", count)
         return count
 

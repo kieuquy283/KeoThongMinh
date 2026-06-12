@@ -53,6 +53,7 @@ def main() -> int:
     reload_backend_modules()
 
     from app.services import voice_chat as voice_service
+    from app.data_paths import get_audio_dir
 
     client = TestClient(sys.modules["app.main"].app)
     failures: list[str] = []
@@ -97,7 +98,7 @@ def main() -> int:
             if key not in payload:
                 raise AssertionError(f"missing key: {key}")
         generated_name = Path(payload["audio_url"]).name
-        generated_path = ROOT_DIR / "app" / "static" / "audio" / generated_name
+        generated_path = get_audio_dir() / generated_name
         if not generated_path.exists():
             raise AssertionError(f"generated audio not found: {generated_path}")
         print("VALIDATION: POST /voice-chat ... PASS")

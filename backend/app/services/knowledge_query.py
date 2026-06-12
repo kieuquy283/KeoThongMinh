@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import numpy as np
+
 from app.services.knowledge_store import get_knowledge_store
 
 logger = logging.getLogger("keobot.knowledge")
@@ -10,9 +12,11 @@ logger = logging.getLogger("keobot.knowledge")
 NOT_ENOUGH_CONTEXT = "Mình chưa có đủ thông tin trong tài liệu local để trả lời câu hỏi này. Bạn hãy thử import thêm tài liệu liên quan nhé."
 
 
-async def answer_from_knowledge(query: str, max_sources: int = 3) -> dict[str, Any]:
+async def answer_from_knowledge(
+    query: str, max_sources: int = 3, mode: str = "hybrid"
+) -> dict[str, Any]:
     store = get_knowledge_store()
-    chunks = store.search_chunks(query, limit=max_sources)
+    chunks = store.hybrid_search_chunks(query, limit=max_sources, mode=mode)
 
     if not chunks:
         logger.info("Knowledge answer: no relevant chunks for query='%s'", query)
@@ -24,34 +28,42 @@ async def answer_from_knowledge(query: str, max_sources: int = 3) -> dict[str, A
         }
 
     context_parts: list[str] = []
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
         header = ""
+        citation = f"[{i + 1}]"
         if chunk.get("source_title"):
-            header = f"[{chunk['source_title']}]"
+            header = f"{citation} {chunk['source_title']}"
             if chunk.get("source_location"):
                 header += f" ({chunk['source_location']})"
         text = chunk.get("text", "").strip()
         if header:
             context_parts.append(f"{header}\n{text}")
         else:
-            context_parts.append(text)
+            context_parts.append(f"{citation}\n{text}")
 
     context = "\n\n---\n\n".join(context_parts)
     answer = await _generate_answer(query, context)
 
     sources = []
-    for c in chunks:
+    for i, c in enumerate(chunks):
+        score = c.get("score", 1.0)
+        if isinstance(score, (np.floating,)):
+            score = float(score)
         sources.append({
             "id": c.get("id"),
             "document_id": c.get("document_id"),
             "chunk_index": c.get("chunk_index"),
+            "citation_index": i + 1,
             "text": c.get("text", "")[:300],
             "source_title": c.get("source_title") or c.get("original_filename", ""),
             "source_location": c.get("source_location"),
-            "score": 1.0,
+            "score": score,
         })
 
-    logger.info("Knowledge answer generated: query='%s' sources=%d", query, len(sources))
+    logger.info(
+        "Knowledge answer generated: query='%s' sources=%d mode=%s",
+        query, len(sources), mode,
+    )
     return {
         "query": query,
         "answer": answer,
@@ -66,7 +78,8 @@ async def _generate_answer(query: str, context: str) -> str:
         prompt = (
             f"Người dùng hỏi: {query}\n\n"
             f"Dưới đây là thông tin từ tài liệu local của người dùng:\n\n{context}\n\n"
-            f"Hãy trả lời dựa trên thông tin trên. Nếu không đủ thông tin, hãy nói rõ."
+            f"Hãy trả lời dựa trên thông tin trên. Khi trích dẫn, hãy dùng [số] để chỉ nguồn. "
+            f"Nếu không đủ thông tin, hãy nói rõ."
         )
         response = await generate_keobot_response(prompt)
         return response.get("bot_text", "")

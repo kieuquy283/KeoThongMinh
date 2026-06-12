@@ -1,7 +1,11 @@
 import type {
+  DocumentContent,
   KeoBotReminder,
   KnowledgeAnswer,
+  KnowledgeChunk,
   KnowledgeDocument,
+  KnowledgeExportResponse,
+  KnowledgeImportResponse,
   KnowledgeSearchResult,
   MemoryContextResponse,
   MemoryItem,
@@ -24,9 +28,12 @@ async function parseError(response: Response): Promise<string> {
   }
 }
 
-export async function sendVoiceChat(audioBlob: Blob, signal?: AbortSignal): Promise<VoiceChatResponse> {
+export async function sendVoiceChat(audioBlob: Blob, signal?: AbortSignal, sessionId?: string): Promise<VoiceChatResponse> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "voice.webm");
+  if (sessionId) {
+    formData.append("session_id", sessionId);
+  }
 
   let response: Response;
 
@@ -277,4 +284,32 @@ export async function clearKnowledge(confirm: boolean): Promise<{ ok: boolean; d
     throw new Error(await parseError(response));
   }
   return (await response.json()) as { ok: boolean; documents_deleted?: number; error?: string };
+}
+
+export async function getDocumentContent(documentId: number): Promise<DocumentContent> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/documents/${documentId}/content`);
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as DocumentContent;
+}
+
+export async function exportKnowledge(): Promise<KnowledgeExportResponse> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/export`);
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as KnowledgeExportResponse;
+}
+
+export async function importKnowledge(data: { records: Array<{ document: KnowledgeDocument; chunks: KnowledgeChunk[] }>; mode?: "merge" | "replace" }): Promise<KnowledgeImportResponse> {
+  const response = await fetch(`${API_BASE_URL}/knowledge/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as KnowledgeImportResponse;
 }

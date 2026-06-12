@@ -216,6 +216,33 @@ export interface KnowledgeAnswer {
   has_sufficient_context: boolean;
 }
 
+export interface DocumentContent {
+  id: number;
+  original_filename: string;
+  file_type: string;
+  content: string;
+}
+
+export interface KnowledgeExportRecord {
+  document: KnowledgeDocument;
+  chunks: KnowledgeChunk[];
+}
+
+export interface KnowledgeExportResponse {
+  schema_version: number;
+  exported_at: string;
+  app_version: string;
+  records: KnowledgeExportRecord[];
+}
+
+export interface KnowledgeImportResponse {
+  ok: boolean;
+  documents_found: number;
+  documents_imported: number;
+  chunks_imported: number;
+  errors: string[];
+}
+
 export interface WakeWordState {
   status: WakeWordStatus;
   phrase?: string | null;

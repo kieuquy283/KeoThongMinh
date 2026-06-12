@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from app.providers.llm import generate_keobot_response, generate_keobot_tool_response
+from app.providers.llm import generate_conversation_summary, generate_keobot_response, generate_keobot_tool_response
+from app.services.conversation_context import get_conversation_manager
 from app.services.knowledge_store import get_knowledge_store
 from app.services.memory_parser import parse_memory_text
 from app.services.memory_store import get_memory_store
@@ -15,9 +16,39 @@ from app.tools.search_tool import get_search_info
 from app.tools.time_tool import get_time_info
 from app.tools.weather_tool import get_weather_info
 
+_follow_up_log = __import__("logging").getLogger("keobot.follow_up")
 
-async def generate_chat_response(user_text: str) -> dict[str, Any]:
-    memory_draft = parse_memory_text(user_text)
+
+def _build_conversation_context(turns: list[dict[str, str]], summary: str | None = None) -> str:
+    parts = []
+    if summary:
+        parts.append(f"[Tóm tắt: {summary}]")
+    for t in turns:
+        label = "Người dùng" if t["role"] == "user" else "Kẹo Thông Minh"
+        parts.append(f"{label}: {t['text']}")
+    return "\n".join(parts)
+
+
+async def generate_chat_response(
+    user_text: str,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    resolved_text = user_text
+    context_turns: list[dict[str, str]] = []
+    mgr = get_conversation_manager()
+
+    if session_id:
+        resolved_text = mgr.resolve_follow_up(session_id, user_text)
+        mgr.add_user_turn(session_id, resolved_text)
+        session = mgr.get_session(session_id)
+        if session and session.needs_summarization():
+            all_turns = [{"role": t["role"], "text": t["text"]} for t in mgr.get_context(session_id, limit=15)]
+            summary = await generate_conversation_summary(all_turns)
+            session.compact_with_summary(summary)
+        context_turns = mgr.get_context(session_id, limit=10)
+        mgr.touch(session_id)
+
+    memory_draft = parse_memory_text(resolved_text)
     if memory_draft["action"] in {"set", "delete"}:
         memory_store = get_memory_store()
         if memory_draft["action"] == "set":
@@ -28,8 +59,11 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
                 str(memory_draft["value"]),
                 str(memory_draft.get("category") or "preference"),
             )
+            bot_text = _build_memory_confirmation(memory_item)
+            if session_id:
+                mgr.add_bot_turn(session_id, bot_text)
             return {
-                "bot_text": _build_memory_confirmation(memory_item),
+                "bot_text": bot_text,
                 "emotion": "happy",
                 "action": "memory_updated",
                 "memory": memory_item,
@@ -42,8 +76,11 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
 
         assert memory_draft["key"] is not None
         deleted = memory_store.delete_memory(str(memory_draft["key"]))
+        bot_text = _build_memory_delete_confirmation(str(memory_draft["key"]), deleted)
+        if session_id:
+            mgr.add_bot_turn(session_id, bot_text)
         return {
-            "bot_text": _build_memory_delete_confirmation(str(memory_draft["key"]), deleted),
+            "bot_text": bot_text,
             "emotion": "happy",
             "action": "memory_deleted",
             "memory": None,
@@ -54,11 +91,14 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    reminder_draft = parse_reminder_text(user_text)
+    reminder_draft = parse_reminder_text(resolved_text)
     if reminder_draft is not None:
         reminder = get_reminder_store().create(reminder_draft.title, reminder_draft.remind_at)
+        bot_text = _build_reminder_confirmation(reminder)
+        if session_id:
+            mgr.add_bot_turn(session_id, bot_text)
         return {
-            "bot_text": _build_reminder_confirmation(reminder),
+            "bot_text": bot_text,
             "emotion": "happy",
             "action": "reminder_created",
             "reminder": reminder,
@@ -68,12 +108,14 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
             "updated_at": None,
         }
 
-    knowledge_result = _detect_knowledge_query(user_text)
+    knowledge_result = _detect_knowledge_query(resolved_text)
     if knowledge_result is not None:
+        if session_id:
+            mgr.add_bot_turn(session_id, str(knowledge_result.get("bot_text", "")))
         return knowledge_result
 
     memory_context = get_memory_store().get_memory_context()
-    tool_route = detect_tool_intent(user_text)
+    tool_route = detect_tool_intent(resolved_text, context_turns)
     if tool_route.intent != "none" and tool_route.confidence >= TOOL_CONFIDENCE_THRESHOLD:
         tool_entities = _apply_memory_defaults(tool_route.intent, tool_route.entities, memory_context)
         tool_result = _run_tool(tool_route.intent, tool_route.query, tool_entities)
@@ -81,8 +123,11 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
         updated_at = tool_result.get("updated_at")
 
         if _tool_is_unavailable(tool_result):
+            bot_text = _build_tool_unavailable_message(tool_route.intent)
+            if session_id:
+                mgr.add_bot_turn(session_id, bot_text)
             return {
-                "bot_text": _build_tool_unavailable_message(tool_route.intent),
+                "bot_text": bot_text,
                 "emotion": "sad",
                 "action": "tool_response",
                 "reminder": None,
@@ -92,9 +137,34 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
                 "updated_at": updated_at,
             }
 
-        llm_response = await generate_keobot_tool_response(user_text, tool_route.intent, tool_result)
+        missing = _detect_missing_info(tool_route.intent, tool_entities, tool_result)
+        if missing:
+            bot_text = missing
+            if session_id:
+                mgr.add_bot_turn(session_id, bot_text)
+            return {
+                "bot_text": bot_text,
+                "emotion": "thinking",
+                "action": "tool_response",
+                "reminder": None,
+                "tool_used": tool_route.intent,
+                "tool_result": tool_result,
+                "sources": sources,
+                "updated_at": updated_at,
+            }
+
+        session_obj = mgr.get_session(session_id) if session_id else None
+        session_summary = session_obj.summary if session_obj else None
+        context_str = _build_conversation_context(context_turns, session_summary)
+        llm_response = await generate_keobot_tool_response(
+            resolved_text, tool_route.intent, tool_result,
+            conversation_context=context_str or None,
+        )
+        bot_text = llm_response["bot_text"]
+        if session_id:
+            mgr.add_bot_turn(session_id, bot_text)
         return {
-            "bot_text": llm_response["bot_text"],
+            "bot_text": bot_text,
             "emotion": llm_response["emotion"],
             "action": "tool_response",
             "reminder": None,
@@ -104,9 +174,19 @@ async def generate_chat_response(user_text: str) -> dict[str, Any]:
             "updated_at": updated_at,
         }
 
-    llm_response = await generate_keobot_response(user_text, memory_context=memory_context)
+    session_obj = mgr.get_session(session_id) if session_id else None
+    session_summary = session_obj.summary if session_obj else None
+    context_str = _build_conversation_context(context_turns, session_summary)
+    llm_response = await generate_keobot_response(
+        resolved_text,
+        memory_context=memory_context,
+        conversation_context=context_str or None,
+    )
+    bot_text = llm_response["bot_text"]
+    if session_id:
+        mgr.add_bot_turn(session_id, bot_text)
     return {
-        "bot_text": llm_response["bot_text"],
+        "bot_text": bot_text,
         "emotion": llm_response["emotion"],
         "action": None,
         "reminder": None,
@@ -265,6 +345,17 @@ def _tool_is_unavailable(tool_result: dict[str, Any]) -> bool:
     if tool_result.get("is_available") is False:
         return True
     return False
+
+
+def _detect_missing_info(intent: str, entities: dict[str, Any], tool_result: dict[str, Any]) -> str | None:
+    if intent == "weather" and not entities.get("location"):
+        return "Minh can biet ban muon xem thoi tiet o dau de tra loi."
+    if intent == "time" and not entities.get("timezone") and not entities.get("location"):
+        return "Minh can biet ban muon xem gio o thanh pho nao."
+    if intent == "currency":
+        if not entities.get("base_currency") and not entities.get("target_currency"):
+            return "Minh can biet ban muon doi tu tien nao sang tien nao."
+    return None
 
 
 def _build_tool_unavailable_message(intent: str) -> str:

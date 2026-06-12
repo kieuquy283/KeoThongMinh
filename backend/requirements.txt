@@ -8,5 +8,6 @@ openai
 google-generativeai
 aiofiles
 httpx
+numpy
 pytest
 pyinstaller

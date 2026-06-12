@@ -46,6 +46,11 @@ MEMORY_CONTEXT_PROMPT = """Thong tin bo nho an toan cua nguoi dung:
 - Khong bao gio de xuat API key hoac thong tin nhay cam.
 """
 
+CONVERSATION_CONTEXT_PROMPT = """Lich su hoi thoai truoc do:
+{}
+Hay su dung thong tin nay de tra loi cau hoi tiep theo mot cach nhat quan, tranh lap lai thong tin da noi.
+"""
+
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     cleaned = text.strip()
@@ -151,7 +156,7 @@ def _local_tool_response(tool_name: str, tool_result: dict[str, Any]) -> dict[st
     }
 
 
-async def generate_keobot_response(user_text: str, memory_context: dict[str, Any] | None = None) -> dict[str, str]:
+async def generate_keobot_response(user_text: str, memory_context: dict[str, Any] | None = None, conversation_context: str | None = None) -> dict[str, str]:
     settings = get_settings()
     provider = settings.llm_provider.lower()
 
@@ -159,6 +164,7 @@ async def generate_keobot_response(user_text: str, memory_context: dict[str, Any
         return _local_keobot_response(user_text, memory_context)
 
     memory_prompt = _format_memory_context(memory_context)
+    conv_prompt = CONVERSATION_CONTEXT_PROMPT.format(conversation_context) if conversation_context else ""
     if provider == "openai":
         if not settings.openai_api_key:
             raise RuntimeError("Thieu OPENAI_API_KEY cho LLM provider openai.")
@@ -166,6 +172,8 @@ async def generate_keobot_response(user_text: str, memory_context: dict[str, Any
 
         client = OpenAI(api_key=settings.openai_api_key)
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        if conv_prompt:
+            messages.append({"role": "system", "content": conv_prompt})
         if memory_prompt:
             messages.append({"role": "system", "content": memory_prompt})
         messages.append({"role": "user", "content": user_text})
@@ -182,9 +190,14 @@ async def generate_keobot_response(user_text: str, memory_context: dict[str, Any
         import google.generativeai as genai
 
         genai.configure(api_key=settings.gemini_api_key)
+        system_parts = [SYSTEM_PROMPT]
+        if conv_prompt:
+            system_parts.append(conv_prompt)
+        if memory_prompt:
+            system_parts.append(memory_prompt)
         model = genai.GenerativeModel(
             settings.gemini_model,
-            system_instruction=f"{SYSTEM_PROMPT}\n\n{memory_prompt}".strip() if memory_prompt else SYSTEM_PROMPT,
+            system_instruction="\n\n".join(system_parts),
         )
         response = model.generate_content(user_text)
         raw_text = getattr(response, "text", "") or ""
@@ -199,7 +212,7 @@ async def generate_keobot_response(user_text: str, memory_context: dict[str, Any
     return normalized.model_dump()
 
 
-async def generate_keobot_tool_response(user_text: str, tool_name: str, tool_result: dict[str, Any]) -> dict[str, str]:
+async def generate_keobot_tool_response(user_text: str, tool_name: str, tool_result: dict[str, Any], conversation_context: str | None = None) -> dict[str, str]:
     settings = get_settings()
     provider = settings.llm_provider.lower()
 
@@ -207,7 +220,10 @@ async def generate_keobot_tool_response(user_text: str, tool_name: str, tool_res
         return _local_tool_response(tool_name, tool_result)
 
     tool_payload = json.dumps(tool_result, ensure_ascii=False)
-    prompt = f"Cau hoi nguoi dung: {user_text}\nTool: {tool_name}\nTool data: {tool_payload}"
+    prompt_parts = [f"Cau hoi nguoi dung: {user_text}", f"Tool: {tool_name}", f"Tool data: {tool_payload}"]
+    if conversation_context:
+        prompt_parts.insert(0, f"Lich su hoi thoai:\n{conversation_context}")
+    prompt = "\n".join(prompt_parts)
 
     if provider == "openai":
         if not settings.openai_api_key:
@@ -267,3 +283,52 @@ def _format_memory_context(memory_context: dict[str, Any] | None) -> str:
         if isinstance(value, str) and value.strip():
             lines.append(f"- {key}: {value.strip()}")
     return "\n".join(lines)
+
+
+SUMMARIZE_SYSTEM_PROMPT = """Tom tat cuoc hoi thoai sau bang 2-3 cau tieng Viet, giu lai thong tin chinh.
+Chi tra ve phan tom tat, khong co markup."""
+
+
+async def generate_conversation_summary(turns: list[dict[str, str]]) -> str:
+    settings = get_settings()
+    provider = settings.llm_provider.lower()
+
+    parts = []
+    for t in turns:
+        label = "Nguoi dung" if t["role"] == "user" else "Tro ly"
+        parts.append(f"{label}: {t['text']}")
+    conversation = "\n".join(parts)
+
+    if provider in {"local", "mock"}:
+        user_msgs = [t["text"] for t in turns if t["role"] == "user"]
+        topics = "; ".join(user_msgs[:3])
+        return f"Nguoi dung da hoi: {topics}" if topics else "Hoi thoai ngan."
+
+    if provider == "openai":
+        if not settings.openai_api_key:
+            return "Hoi thoai khong duoc tom tat (thieu API key)."
+        from openai import OpenAI
+        client = OpenAI(api_key=settings.openai_api_key)
+        response = client.chat.completions.create(
+            model=settings.openai_chat_model,
+            temperature=0.3,
+            messages=[
+                {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT},
+                {"role": "user", "content": conversation},
+            ],
+        )
+        return (response.choices[0].message.content or "").strip()
+
+    if provider == "gemini":
+        if not settings.gemini_api_key:
+            return "Hoi thoai khong duoc tom tat (thieu API key)."
+        import google.generativeai as genai
+        genai.configure(api_key=settings.gemini_api_key)
+        model = genai.GenerativeModel(
+            settings.gemini_model,
+            system_instruction=SUMMARIZE_SYSTEM_PROMPT,
+        )
+        response = model.generate_content(conversation)
+        return (getattr(response, "text", "") or "").strip()
+
+    return "Hoi thoai khong duoc tom tat."
