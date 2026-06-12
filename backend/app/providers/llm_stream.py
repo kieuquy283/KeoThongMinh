@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
@@ -17,6 +19,8 @@ from app.providers.llm import (
     _local_tool_response,
 )
 from app.schemas import KeoBotLLMResponse
+
+logger = logging.getLogger("keobot.llm_stream")
 
 
 @dataclass
@@ -56,13 +60,26 @@ async def stream_keobot_response(
             messages.append({"role": "system", "content": memory_prompt})
         messages.append({"role": "user", "content": user_text})
 
-        stream = client.chat.completions.create(
-            model=settings.openai_chat_model,
-            temperature=0.6,
-            response_format={"type": "json_object"},
-            messages=messages,
-            stream=True,
-        )
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                stream = client.chat.completions.create(
+                    model=settings.openai_chat_model,
+                    temperature=0.6,
+                    response_format={"type": "json_object"},
+                    messages=messages,
+                    stream=True,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning("openai_retry attempt=%d error=%s", attempt + 1, exc)
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (2 ** attempt))
+        else:
+            logger.error("openai_failed after 3 retries: %s", last_error)
+            yield json.dumps({"bot_text": "Xin lỗi, dịch vụ AI tạm thời không khả dụng. Vui lòng thử lại sau.", "is_available": False}, ensure_ascii=False)
+            return
         collected = ""
         for chunk in stream:
             if cancel_check and cancel_check():
@@ -94,7 +111,21 @@ async def stream_keobot_response(
             settings.gemini_model,
             system_instruction="\n\n".join(system_parts),
         )
-        response = model.generate_content(user_text, stream=True)
+        last_error = None
+        response = None
+        for attempt in range(3):
+            try:
+                response = model.generate_content(user_text, stream=True)
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning("gemini_retry attempt=%d error=%s", attempt + 1, exc)
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (2 ** attempt))
+        if response is None:
+            logger.error("gemini_failed after 3 retries: %s", last_error)
+            yield json.dumps({"bot_text": "Xin lỗi, dịch vụ AI tạm thời không khả dụng. Vui lòng thử lại sau.", "is_available": False}, ensure_ascii=False)
+            return
         collected = ""
         for chunk in response:
             if cancel_check and cancel_check():
@@ -141,16 +172,30 @@ async def stream_keobot_tool_response(
         from openai import OpenAI
 
         client = OpenAI(api_key=settings.openai_api_key)
-        stream = client.chat.completions.create(
-            model=settings.openai_chat_model,
-            temperature=0.2,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": TOOL_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            stream=True,
-        )
+        last_error = None
+        stream = None
+        for attempt in range(3):
+            try:
+                stream = client.chat.completions.create(
+                    model=settings.openai_chat_model,
+                    temperature=0.2,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": TOOL_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    stream=True,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning("tool_openai_retry attempt=%d error=%s", attempt + 1, exc)
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (2 ** attempt))
+        if stream is None:
+            logger.error("tool_openai_failed after 3 retries: %s", last_error)
+            yield json.dumps({"bot_text": "Xin lỗi, dịch vụ AI tạm thời không khả dụng.", "is_available": False}, ensure_ascii=False)
+            return
         collected = ""
         for chunk in stream:
             if cancel_check and cancel_check():
@@ -177,7 +222,21 @@ async def stream_keobot_tool_response(
             settings.gemini_model,
             system_instruction=TOOL_SYSTEM_PROMPT,
         )
-        response = model.generate_content(prompt, stream=True)
+        last_error = None
+        response = None
+        for attempt in range(3):
+            try:
+                response = model.generate_content(prompt, stream=True)
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning("tool_gemini_retry attempt=%d error=%s", attempt + 1, exc)
+                if attempt < 2:
+                    await asyncio.sleep(1.0 * (2 ** attempt))
+        if response is None:
+            logger.error("tool_gemini_failed after 3 retries: %s", last_error)
+            yield json.dumps({"bot_text": "Xin lỗi, dịch vụ AI tạm thời không khả dụng.", "is_available": False}, ensure_ascii=False)
+            return
         collected = ""
         for chunk in response:
             if cancel_check and cancel_check():

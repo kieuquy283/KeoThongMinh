@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger("keobot.tool")
 
 from app.services. memory_store import get_memory_store
 from app.tools.currency_tool import get_currency_info
@@ -12,7 +15,7 @@ from app.tools.time_tool import get_time_info
 from app.tools.weather_tool import get_weather_info
 
 
-_TOOL_TIMEOUT = 15.0
+_TOOL_TIMEOUT = 30.0
 
 
 def _run_tool_sync(intent: str, query: str, entities: dict[str, Any]) -> dict[str, Any]:
@@ -27,6 +30,36 @@ def _run_tool_sync(intent: str, query: str, entities: dict[str, Any]) -> dict[st
     return {
         "is_available": False,
         "message": "Unsupported tool.",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def _run_tool_with_retry(intent: str, query: str, entities: dict[str, Any]) -> dict[str, Any]:
+    import time as time_mod
+
+    last_error: str | None = None
+    for attempt in range(3):
+        try:
+            result = await asyncio.to_thread(_run_tool_sync, intent, query, entities)
+            if result and result.get("is_available") is not False:
+                return result
+            last_error = result.get("message", "unavailable") if result else "no_result"
+            if attempt < 2:
+                delay = 0.5 * (2 ** attempt)
+                logger.info("tool_retry intent=%s attempt=%d delay=%.1fs reason=%s", intent, attempt + 1, delay, last_error)
+                await asyncio.sleep(delay)
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt < 2:
+                delay = 1.0 * (2 ** attempt)
+                logger.warning("tool_retry intent=%s attempt=%d delay=%.1fs error=%s", intent, attempt + 1, delay, exc)
+                await asyncio.sleep(delay)
+
+    return {
+        "is_available": False,
+        "available": False,
+        "message": last_error or "Tool unavailable after retries.",
+        "status": "unavailable",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -176,17 +209,32 @@ class AsyncToolExecutor:
         entities: dict[str, Any],
         timeout: float,
     ) -> None:
+        import time as time_mod
+        start = time_mod.monotonic()
         try:
             result = await asyncio.wait_for(
-                asyncio.to_thread(_run_tool_sync, exec_.intent, exec_.query, entities),
+                _run_tool_with_retry(exec_.intent, exec_.query, entities),
                 timeout=timeout,
             )
             exec_._result = result
             exec_._done = True
         except asyncio.TimeoutError:
             exec_._error = f"Tool timed out after {timeout}s"
+            logger.warning("tool_timeout intent=%s timeout=%.1fs", exec_.intent, timeout)
         except Exception as exc:
             exec_._error = str(exc)
+            logger.error("tool_error intent=%s error=%s", exec_.intent, exc)
+        finally:
+            elapsed = time_mod.monotonic() - start
+            try:
+                from app.services.stability import record_tool_execution
+                record_tool_execution(elapsed)
+            except ImportError:
+                pass
+            logger.info(
+                "tool_execution intent=%s elapsed=%.2fs done=%s error=%s",
+                exec_.intent, elapsed, exec_._done, exec_._error,
+            )
 
     async def execute_multiple(
         self,

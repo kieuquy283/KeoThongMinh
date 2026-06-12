@@ -81,6 +81,8 @@ async def lifespan(app: FastAPI):
 async def _periodic_session_cleanup() -> None:
     from app.services.conversation_context import get_conversation_manager
     from app.services.voice_session_manager import cleanup_session, get_active_session_ids
+    from app.services.stream_manager import get_stream_manager
+    from app.services.stability import get_timing_stats, log_timing_stats
     while True:
         await asyncio.sleep(300)
         try:
@@ -88,6 +90,14 @@ async def _periodic_session_cleanup() -> None:
             mgr.force_cleanup()
             for sid in get_active_session_ids():
                 cleanup_session(sid)
+            stream_mgr = get_stream_manager()
+            cleaned = stream_mgr.cleanup_stale()
+            if cleaned:
+                log = logging.getLogger("keobot.session_cleanup")
+                log.info("cleaned %d stale stream sessions", cleaned)
+            stats = get_timing_stats()
+            if stats.stream_count > 0:
+                log_timing_stats()
         except Exception:
             logger = logging.getLogger("keobot.session_cleanup")
             logger.exception("Session cleanup error")

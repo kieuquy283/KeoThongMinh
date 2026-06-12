@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from typing import AsyncIterator
+
+logger = logging.getLogger("keobot.chat_flow")
 
 from app.providers.llm import generate_conversation_summary, generate_keobot_response, generate_keobot_tool_response
 from app.providers.llm_stream import stream_keobot_response, stream_keobot_tool_response
@@ -78,6 +81,7 @@ def _interrupt_active_stream(session_id: str, new_input: str = "") -> bool:
         mgr.add_bot_turn(session_id, f"[interrupted] {partial.strip()}")
 
     if new_input.strip():
+        _record_interrupt_event()
         bus = get_event_bus()
         bus.publish(Event(type=EventType.interrupt, payload={
             "text": new_input,
@@ -516,6 +520,7 @@ async def stream_chat_response(
     stream_mgr = get_stream_manager()
     stream_session = stream_mgr.get_or_create(session_id or "_default")
     stream_session.start()
+    _record_stream_start()
 
     resolved_text = user_text
     context_turns: list[dict[str, str]] = []
@@ -653,6 +658,7 @@ async def stream_chat_response(
 
         if stream_session.state == StreamState.streaming:
             stream_session.complete()
+        _record_stream_end(stream_session)
         bus.publish(Event(type=EventType.stream_end, payload={"tool": tool_route.intent, "status": "completed"}, session_id=session_id))
         return
 
@@ -678,7 +684,43 @@ async def stream_chat_response(
 
     if stream_session.state == StreamState.streaming:
         stream_session.complete()
+    _record_stream_end(stream_session)
     bus.publish(Event(type=EventType.stream_end, payload={"status": "completed"}, session_id=session_id))
+
+def _record_stream_start() -> None:
+    try:
+        from app.services.stability import record_stream_start, record_event
+        record_stream_start()
+        record_event("stream_start")
+    except ImportError:
+        pass
+
+
+def _record_stream_end(session: Any) -> None:
+    try:
+        from app.services.stability import record_stream_end, record_event
+        duration = session.stream_duration
+        if duration is not None:
+            record_stream_end(duration)
+        record_event("stream_end")
+    except ImportError:
+        pass
+
+
+def _record_interrupt_event() -> None:
+    try:
+        from app.services.stability import record_event
+        record_event("interrupt")
+    except ImportError:
+        pass
+
+
+def _record_tool_event(event_type: str) -> None:
+    try:
+        from app.services.stability import record_event
+        record_event(event_type)
+    except ImportError:
+        pass
 
 
 def _build_tool_unavailable_message(intent: str) -> str:
