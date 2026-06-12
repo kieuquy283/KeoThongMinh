@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from typing import AsyncIterator
+
 from app.providers.llm import generate_conversation_summary, generate_keobot_response, generate_keobot_tool_response
+from app.providers.llm_stream import stream_keobot_response
+from app.services.stream_manager import StreamState, get_stream_manager
 from app.services.conversation_context import get_conversation_manager
 from app.services.knowledge_store import get_knowledge_store
 from app.services.memory_parser import parse_memory_text
@@ -356,6 +360,45 @@ def _detect_missing_info(intent: str, entities: dict[str, Any], tool_result: dic
         if not entities.get("base_currency") and not entities.get("target_currency"):
             return "Minh can biet ban muon doi tu tien nao sang tien nao."
     return None
+
+
+async def stream_chat_response(
+    user_text: str,
+    session_id: str | None = None,
+) -> AsyncIterator[str]:
+    stream_mgr = get_stream_manager()
+    stream_session = stream_mgr.get_or_create(session_id or "_default")
+    stream_session.start()
+
+    resolved_text = user_text
+    context_turns: list[dict[str, str]] = []
+    mgr = get_conversation_manager()
+
+    if session_id:
+        resolved_text = mgr.resolve_follow_up(session_id, user_text)
+        mgr.add_user_turn(session_id, resolved_text)
+        context_turns = mgr.get_context(session_id, limit=10)
+        mgr.touch(session_id)
+
+    memory_context = get_memory_store().get_memory_context()
+
+    session_obj = mgr.get_session(session_id) if session_id else None
+    session_summary = session_obj.summary if session_obj else None
+    context_str = _build_conversation_context(context_turns, session_summary)
+
+    async for token in stream_keobot_response(
+        resolved_text,
+        memory_context=memory_context,
+        conversation_context=context_str or None,
+        cancel_check=stream_session.is_cancelled,
+    ):
+        if stream_session.is_cancelled():
+            break
+        stream_session.add_token(token)
+        yield token
+
+    if stream_session.state != StreamState.cancelled:
+        stream_session.complete()
 
 
 def _build_tool_unavailable_message(intent: str) -> str:

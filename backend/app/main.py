@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -50,8 +51,10 @@ from app.schemas import (
     ToolsStatusResponse,
     VoiceChatResponse,
 )
-from app.services.chat_flow import generate_chat_response
+from app.services.chat_flow import generate_chat_response, stream_chat_response
 from app.services.document_importer import import_document
+from app.services.stream_manager import get_stream_manager
+from fastapi.responses import StreamingResponse
 from app.services.entity_extractor import extract_entities
 from app.services.knowledge_store import get_knowledge_store
 from app.services.memory_store import get_memory_store
@@ -504,6 +507,42 @@ async def text_chat(payload: TextChatRequest) -> TextChatResponse:
         sources=[ToolSource.model_validate(source) for source in chat_response["sources"]],
         updated_at=chat_response["updated_at"],
     )
+
+
+async def _stream_events(payload: TextChatRequest):
+    async for token in stream_chat_response(payload.message, session_id=payload.session_id):
+        yield f"data: {token}\n\n"
+
+
+@app.post("/text-chat/stream")
+async def text_chat_stream(payload: TextChatRequest):
+    stream_mgr = get_stream_manager()
+    stream_mgr.get_or_create(payload.session_id or "_default")
+    return StreamingResponse(
+        _stream_events(payload),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/stream/{session_id}/cancel")
+async def cancel_stream(session_id: str):
+    stream_mgr = get_stream_manager()
+    cancelled = stream_mgr.cancel(session_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="No active stream found for this session.")
+    session = stream_mgr.get_session(session_id)
+    state = session.state if session else "idle"
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "state": state,
+        "cancelled_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.post("/voice-chat", response_model=VoiceChatResponse)
