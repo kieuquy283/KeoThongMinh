@@ -11,6 +11,7 @@ from app.providers.llm import generate_conversation_summary, generate_keobot_res
 from app.providers.llm_stream import stream_keobot_response, stream_keobot_tool_response
 from app.services.async_tool_executor import AsyncToolExecutor
 from app.services.event_bus import Event, EventType, get_event_bus
+from app.services.replanner import ReplanDecision, get_replanner
 from app.services.stream_manager import StreamState, get_stream_manager
 from app.services.conversation_context import get_conversation_manager
 from app.services.knowledge_store import get_knowledge_store
@@ -18,7 +19,7 @@ from app.services.memory_parser import parse_memory_text
 from app.services.memory_store import get_memory_store
 from app.services.reminder_parser import parse_reminder_text
 from app.services.reminder_store import Reminder, get_reminder_store
-from app.services.tool_router import TOOL_CONFIDENCE_THRESHOLD, detect_tool_intent
+from app.services.tool_router import TOOL_CONFIDENCE_THRESHOLD, ToolRoute, detect_tool_intent
 from app.tools.currency_tool import get_currency_info
 from app.tools.search_tool import get_search_info
 from app.tools.time_tool import get_time_info
@@ -62,7 +63,7 @@ async def _yield_thinking(
         await asyncio.sleep(interval)
 
 
-def _interrupt_active_stream(session_id: str) -> bool:
+def _interrupt_active_stream(session_id: str, new_input: str = "") -> bool:
     """If there's an active stream for this session, interrupt it and preserve partial output."""
     stream_mgr = get_stream_manager()
     session = stream_mgr.get_session(session_id)
@@ -75,6 +76,30 @@ def _interrupt_active_stream(session_id: str) -> bool:
     if partial.strip():
         mgr = get_conversation_manager()
         mgr.add_bot_turn(session_id, f"[interrupted] {partial.strip()}")
+
+    if new_input.strip():
+        bus = get_event_bus()
+        bus.publish(Event(type=EventType.interrupt, payload={
+            "text": new_input,
+            "partial_response": partial,
+            "intent": session.replan_context.get("intent", "none") if session.replan_context else "none",
+        }, session_id=session_id))
+
+        from app.services.replanner import _prepare_input_from_session, _heuristic_decide
+        input_data = _prepare_input_from_session(
+            session_id=session_id,
+            new_input=new_input,
+            intent=session.replan_context.get("intent", "none") if session.replan_context else "none",
+        )
+        output = _heuristic_decide(input_data)
+        session.replan_context = {
+            "decision": output.decision.value,
+            "reason": output.reason,
+            "new_intent": output.new_intent,
+            "explanation": output.explanation,
+            "partial_response": partial,
+            "new_input": new_input,
+        }
 
     session.reset()
     return True
@@ -410,6 +435,17 @@ def _detect_missing_info(intent: str, entities: dict[str, Any], tool_result: dic
     return None
 
 
+def _detect_missing_field(intent: str, entities: dict[str, Any]) -> str | None:
+    if intent == "weather" and not entities.get("location"):
+        return "location"
+    if intent == "time" and not entities.get("timezone") and not entities.get("location"):
+        return "timezone"
+    if intent == "currency":
+        if not entities.get("base_currency") and not entities.get("target_currency"):
+            return "target_currency"
+    return None
+
+
 class StreamOrchestrator:
     def __init__(self) -> None:
         self._tool_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -451,12 +487,30 @@ def get_orchestrator() -> StreamOrchestrator:
     return _orchestrator
 
 
+def _build_replan_context_prompt(replan_ctx: dict[str, Any] | None) -> str:
+    if not replan_ctx:
+        return ""
+    decision = replan_ctx.get("decision", "")
+    partial = replan_ctx.get("partial_response", "").strip()
+    new_input = replan_ctx.get("new_input", "").strip()
+    if decision == "continue" and partial:
+        return f"(Tiep theo cau tra loi dang do: {partial})"
+    return ""
+
+
 async def stream_chat_response(
     user_text: str,
     session_id: str | None = None,
 ) -> AsyncIterator[str]:
+    replan_ctx: dict[str, Any] | None = None
+
     if session_id:
-        _interrupt_active_stream(session_id)
+        _interrupt_active_stream(session_id, new_input=user_text)
+        stream_mgr = get_stream_manager()
+        session = stream_mgr.get_session(session_id)
+        if session and session.replan_context:
+            replan_ctx = dict(session.replan_context)
+            session.replan_context = None
 
     bus = get_event_bus()
     stream_mgr = get_stream_manager()
@@ -473,10 +527,26 @@ async def stream_chat_response(
         context_turns = mgr.get_context(session_id, limit=10)
         mgr.touch(session_id)
 
+    replan_prompt = _build_replan_context_prompt(replan_ctx)
+
     bus.publish(Event(type=EventType.stream_start, payload={"text": resolved_text}, session_id=session_id))
 
     memory_context = get_memory_store().get_memory_context()
+
+    replan_intent = None
+    if replan_ctx:
+        if replan_ctx.get("decision") == "switch_intent":
+            replan_intent = replan_ctx.get("new_intent")
+        elif replan_ctx.get("decision") == "ask_missing_info":
+            pending_intent = replan_ctx.get("intent")
+            if pending_intent:
+                replan_intent = pending_intent
+
     tool_route = detect_tool_intent(resolved_text, context_turns)
+    if replan_intent and replan_intent != "none":
+        from app.services.entity_extractor import extract_entities
+        entities = extract_entities(resolved_text)
+        tool_route = ToolRoute(intent=replan_intent, query=resolved_text, entities=entities, confidence=1.0)
 
     if tool_route.intent != "none" and tool_route.confidence >= TOOL_CONFIDENCE_THRESHOLD:
         orchestrator = get_orchestrator()
@@ -523,7 +593,14 @@ async def stream_chat_response(
         missing = _detect_missing_info(tool_route.intent, exec_entities, result)
         if missing:
             stream_session.transition_to(StreamState.replanning)
-            bus.publish(Event(type=EventType.replanning, payload={"tool": tool_route.intent, "reason": "missing_info"}, session_id=session_id))
+            stream_session.replan_context = {
+                "decision": "ask_missing_info",
+                "intent": tool_route.intent,
+                "missing_field": _detect_missing_field(tool_route.intent, exec_entities),
+                "entities": tool_route.entities,
+                "partial_response": stream_session.partial_text(),
+            }
+            bus.publish(Event(type=EventType.replanning, payload={"tool": tool_route.intent, "reason": "missing_info", "text": "", "tool_result": result}, session_id=session_id))
             yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'completed', 'missing_info': True}, ensure_ascii=False)}"
             for ch in missing:
                 if stream_session.is_cancelled():
@@ -545,6 +622,10 @@ async def stream_chat_response(
         session_obj = mgr.get_session(session_id) if session_id else None
         session_summary = session_obj.summary if session_obj else None
         context_str = _build_conversation_context(context_turns, session_summary)
+        if replan_prompt and context_str:
+            context_str = f"{replan_prompt}\n\n{context_str}"
+        elif replan_prompt:
+            context_str = replan_prompt
 
         full_response = ""
         async for token in stream_keobot_tool_response(
@@ -578,6 +659,10 @@ async def stream_chat_response(
     session_obj = mgr.get_session(session_id) if session_id else None
     session_summary = session_obj.summary if session_obj else None
     context_str = _build_conversation_context(context_turns, session_summary)
+    if replan_prompt and context_str:
+        context_str = f"{replan_prompt}\n\n{context_str}"
+    elif replan_prompt:
+        context_str = replan_prompt
 
     async for token in stream_keobot_response(
         resolved_text,
