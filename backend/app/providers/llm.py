@@ -83,7 +83,7 @@ def _coerce_response(payload: dict[str, Any], raw_text: str) -> KeoBotLLMRespons
     emotion = payload.get("emotion", "neutral")
 
     if not isinstance(bot_text, str) or not bot_text.strip():
-        return KeoBotLLMResponse(bot_text=raw_text.strip() or "Minh chua nghi ra cau tra loi phu hop.", emotion="neutral")
+        return KeoBotLLMResponse(bot_text=raw_text.strip() or "Mình chưa nghĩ ra câu trả lời phù hợp.", emotion="neutral")
 
     if emotion not in ALLOWED_EMOTIONS:
         emotion = "neutral"
@@ -98,35 +98,35 @@ def _local_keobot_response(user_text: str, memory_context: dict[str, Any] | None
     text = user_text.lower()
     if any(keyword in text for keyword in ["ban la ai", "ai vay", "gioi thieu", "gioi thieu ve ban"]):
         if user_name:
-            return {"bot_text": f"Minh la Kẹo Thông Minh, tro ly AI tieng Viet than thien cua {user_name}.", "emotion": "happy"}
-        return {"bot_text": "Minh la Kẹo Thông Minh, tro ly AI tieng Viet than thien cua ban.", "emotion": "happy"}
+            return {"bot_text": f"Mình là Kẹo Thông Minh, trợ lý AI tiếng Việt thân thiện của {user_name}.", "emotion": "happy"}
+        return {"bot_text": "Mình là Kẹo Thông Minh, trợ lý AI tiếng Việt thân thiện của bạn.", "emotion": "happy"}
     if any(keyword in text for keyword in ["dua", "joke", "cau dua", "cuoi"]):
-        return {"bot_text": "Day nhe: Kẹo Thông Minh ma buon thi van phai... bat che do vui ve truoc da!", "emotion": "wink"}
+        return {"bot_text": "Đây nhé: Kẹo Thông Minh mà buồn thì vẫn phải... bật chế độ vui vẻ trước đã!", "emotion": "wink"}
     if any(keyword in text for keyword in ["met", "buon", "chan", "stress", "duoi"]):
-        return {"bot_text": "Nghe co ve ban dang met. Nghi mot chut roi minh tinh tiep nhe.", "emotion": "sad"}
+        return {"bot_text": "Nghe có vẻ bạn đang mệt. Nghỉ một chút rồi mình tính tiếp nhé.", "emotion": "sad"}
     if any(keyword in text for keyword in ["giai thich", "la gi", "tai sao", "how", "roi sao"]):
-        return {"bot_text": "Minh se giai thich ngan gon tung buoc nhe.", "emotion": "thinking"}
+        return {"bot_text": "Mình sẽ giải thích ngắn gọn từng bước nhé.", "emotion": "thinking"}
     if user_name:
         if answer_style == "short":
-            return {"bot_text": f"Minh da nghe, {user_name}. Ban muon minh lam gi tiep?", "emotion": "neutral"}
-        return {"bot_text": f"Minh da nghe roi, {user_name}. Ban muon minh ho tro phan nao tiep theo?", "emotion": "neutral"}
-    return {"bot_text": "Minh da nghe roi. Ban muon minh ho tro phan nao tiep theo?", "emotion": "neutral"}
+            return {"bot_text": f"Mình đã nghe, {user_name}. Bạn muốn mình làm gì tiếp?", "emotion": "neutral"}
+        return {"bot_text": f"Mình đã nghe rồi, {user_name}. Bạn muốn mình hỗ trợ phần nào tiếp theo?", "emotion": "neutral"}
+    return {"bot_text": "Mình đã nghe rồi. Bạn muốn mình hỗ trợ phần nào tiếp theo?", "emotion": "neutral"}
 
 
 def _local_tool_response(tool_name: str, tool_result: dict[str, Any]) -> dict[str, str]:
     if tool_name == "time":
         return {
-            "bot_text": f'Bay gio o {tool_result["location"]} la {tool_result["formatted_time"]}.',
+            "bot_text": f'Bây giờ ở {tool_result["location"]} là {tool_result["formatted_time"]}.',
             "emotion": "neutral",
         }
 
     if tool_name == "currency":
-        suffix = " Day la ty gia demo, khong phai du lieu live." if not tool_result.get("is_live", False) else ""
+        suffix = " Đây là tỷ giá demo, không phải dữ liệu live." if not tool_result.get("is_live", False) else ""
         converted_amount = tool_result.get("converted_amount")
         amount_prefix = f'{tool_result["amount"]} ' if tool_result.get("amount") is not None else ""
         return {
             "bot_text": (
-                f'{amount_prefix}{tool_result["base_currency"]} hien tai khoang {converted_amount if converted_amount is not None else tool_result["rate"]} '
+                f'{amount_prefix}{tool_result["base_currency"]} hiện tại khoảng {converted_amount if converted_amount is not None else tool_result["rate"]} '
                 f'{tool_result["target_currency"]}.{suffix}'
             ),
             "emotion": "thinking",
@@ -135,8 +135,8 @@ def _local_tool_response(tool_name: str, tool_result: dict[str, Any]) -> dict[st
     if tool_name == "weather":
         return {
             "bot_text": (
-                f'Thoi tiet tai {tool_result["location"]}: {tool_result["description"]}, '
-                f'{tool_result["temperature_c"]} do C, cam giac nhu {tool_result["feels_like_c"]} do C.'
+                f'Thời tiết tại {tool_result["location"]}: {tool_result["description"]}, '
+                f'{tool_result["temperature_c"]} độ C, cảm giác như {tool_result["feels_like_c"]} độ C.'
             ),
             "emotion": "neutral",
         }
@@ -146,12 +146,12 @@ def _local_tool_response(tool_name: str, tool_result: dict[str, Any]) -> dict[st
         if results:
             first = results[0]
             return {
-                "bot_text": f'Thong tin noi bat: {first.get("title", "")}. Minh da kem nguon de ban xem chi tiet.',
+                "bot_text": f'Thông tin nổi bật: {first.get("title", "")}. Mình đã kèm nguồn để bạn xem chi tiết.',
                 "emotion": "thinking",
             }
 
     return {
-        "bot_text": "Minh da nhan du lieu tu cong cu va se hien thi kem nguon tham khao.",
+        "bot_text": "Mình đã nhận dữ liệu từ công cụ và sẽ hiển thị kèm nguồn tham khảo.",
         "emotion": "neutral",
     }
 

@@ -16,6 +16,8 @@ interface UseWakeWordResult {
   lastDetectedPhrase: string | null;
   startWakeWord: () => void;
   stopWakeWord: () => void;
+  pauseWakeWord: () => void;
+  resumeWakeWord: () => void;
   error: string | null;
 }
 
@@ -81,6 +83,7 @@ export function useWakeWord({ enabled, phrases = ["kẹo thông minh ơi", "này
   const [status, setStatus] = useState<WakeWordStatus>(enabled && engine !== "hotkey_only" ? "starting" : "off");
   const [lastDetectedPhrase, setLastDetectedPhrase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const wasActiveRef = useRef(false);
 
   const notifyWakeWordStatus = useCallback((payload: WakeWordState) => {
     if (typeof window === "undefined" || !window.keobotDesktop?.notifyWakeWordStatus) {
@@ -295,6 +298,28 @@ export function useWakeWord({ enabled, phrases = ["kẹo thông minh ơi", "này
     }
   }, [enabled, engine, language, notifyWakeWordStatus, stopWakeWord, startLocalWakeWord]);
 
+  const pauseWakeWord = useCallback(() => {
+    if (activeRef.current) {
+      wasActiveRef.current = true;
+      stopWakeWord();
+    } else {
+      wasActiveRef.current = false;
+    }
+  }, [stopWakeWord]);
+
+  const resumeWakeWord = useCallback(() => {
+    if (!wasActiveRef.current || !enabled) {
+      return;
+    }
+    wasActiveRef.current = false;
+    // Small delay to avoid echo from recent audio playback
+    window.setTimeout(() => {
+      if (enabled && !activeRef.current) {
+        startWakeWord();
+      }
+    }, 400);
+  }, [enabled, startWakeWord]);
+
   useEffect(() => {
     phrasesRef.current = phrases;
   }, [phrases]);
@@ -373,8 +398,10 @@ export function useWakeWord({ enabled, phrases = ["kẹo thông minh ơi", "này
       lastDetectedPhrase,
       startWakeWord,
       stopWakeWord,
+      pauseWakeWord,
+      resumeWakeWord,
       error,
     }),
-    [enabled, supported, status, lastDetectedPhrase, startWakeWord, stopWakeWord, error],
+    [enabled, supported, status, lastDetectedPhrase, startWakeWord, stopWakeWord, pauseWakeWord, resumeWakeWord, error],
   );
 }

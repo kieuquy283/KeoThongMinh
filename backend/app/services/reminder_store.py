@@ -57,6 +57,10 @@ class ReminderStore:
                 )
                 """
             )
+            try:
+                connection.execute("ALTER TABLE reminders ADD COLUMN repeat_interval INTEGER")
+            except sqlite3.OperationalError:
+                pass
 
     def create(self, title: str, remind_at: datetime, *, created_at: datetime | None = None, repeat_interval: int | None = None) -> Reminder:
         created_at = created_at or datetime.now()

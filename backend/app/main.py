@@ -86,7 +86,7 @@ async def _periodic_session_cleanup() -> None:
     from app.services.conversation_context import get_conversation_manager
     from app.services.voice_session_manager import cleanup_session, get_active_session_ids
     from app.services.stream_manager import get_stream_manager
-    from app.services.stability import get_timing_stats, log_timing_stats
+    from app.services.stability import log_timing_stats
     while True:
         await asyncio.sleep(300)
         try:
@@ -99,9 +99,7 @@ async def _periodic_session_cleanup() -> None:
             if cleaned:
                 log = logging.getLogger("keobot.session_cleanup")
                 log.info("cleaned %d stale stream sessions", cleaned)
-            stats = get_timing_stats()
-            if stats.stream_count > 0:
-                log_timing_stats()
+            log_timing_stats()
         except Exception:
             logger = logging.getLogger("keobot.session_cleanup")
             logger.exception("Session cleanup error")
@@ -591,6 +589,10 @@ async def voice_chat(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger = logging.getLogger("keobot.voice_chat")
+        logger.exception("Voice chat failed with unexpected error")
+        raise HTTPException(status_code=500, detail=f"Lỗi server: {exc}") from exc
 
 
 @app.websocket("/ws/reminders")

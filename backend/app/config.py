@@ -45,7 +45,7 @@ class Settings:
     openai_stt_model: str = get_env("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe") or "gpt-4o-mini-transcribe"
     openai_chat_model: str = get_env("OPENAI_CHAT_MODEL", "gpt-4o-mini") or "gpt-4o-mini"
     gemini_api_key: str | None = get_env("GEMINI_API_KEY") or get_env("GOOGLE_API_KEY")
-    gemini_model: str = get_env("GEMINI_MODEL", "gemini-1.5-flash") or "gemini-1.5-flash"
+    gemini_model: str = get_env("GEMINI_MODEL", "gemini-2.0-flash") or "gemini-2.0-flash"
 
     currency_provider: str = get_env("CURRENCY_PROVIDER", "none") or "none"
     exchange_rate_api_key: str | None = get_env("EXCHANGE_RATE_API_KEY")

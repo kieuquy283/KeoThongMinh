@@ -287,6 +287,37 @@ export default function App() {
     };
   }, [isDesktopMode, wakeWord, wakeWord.enabled, wakeWord.supported]);
 
+  // Subscribe to audio playback state and pause/resume wake word to prevent self-triggering
+  useEffect(() => {
+    const unsubscribe = audioSubscribe((state) => {
+      if (state === "playing") {
+        if (wakeWord.enabled && wakeWord.supported) {
+          wakeWord.pauseWakeWord();
+        }
+      } else if (state === "idle" || state === "stopped" || state === "error") {
+        if (wakeWord.enabled && wakeWord.supported && desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE && sessionState !== "interrupted" && autoStatus !== "speaking") {
+          wakeWord.resumeWakeWord();
+        }
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [wakeWord.enabled, wakeWord.supported, wakeWord.pauseWakeWord, wakeWord.resumeWakeWord, desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE, sessionState, autoStatus]);
+
+  // Also pause wake word when auto conversation is speaking (it uses its own Audio element)
+  useEffect(() => {
+    if (autoStatus === "speaking" || autoStatus === "sending" || autoStatus === "thinking") {
+      if (wakeWord.enabled && wakeWord.supported) {
+        wakeWord.pauseWakeWord();
+      }
+    } else if (autoStatus === "listening" || autoStatus === "off" || autoStatus === "speech_detected" || autoStatus === "silence_wait") {
+      if (wakeWord.enabled && wakeWord.supported && desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE && sessionState !== "interrupted") {
+        wakeWord.resumeWakeWord();
+      }
+    }
+  }, [autoStatus, wakeWord.enabled, wakeWord.supported, wakeWord.pauseWakeWord, wakeWord.resumeWakeWord, desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE, sessionState]);
+
   useEffect(() => {
     if (!wakeWord.enabled) {
       if (handsfreeMessage?.includes("Wake word") || handsfreeMessage?.includes("Kẹo Thông Minh đã nghe bạn gọi")) {
@@ -343,6 +374,11 @@ export default function App() {
     setStatus("speaking");
     setSessionState("speaking");
 
+    // Pause wake word detection while bot is speaking to prevent self-triggering
+    if (wakeWord.enabled && wakeWord.supported) {
+      wakeWord.pauseWakeWord();
+    }
+
     try {
       await audioPlay(url);
       if (!audioIsPlaying()) {
@@ -351,7 +387,7 @@ export default function App() {
         setStatus("idle");
         setSessionState((current) => (current === "interrupted" ? "interrupted" : "idle"));
         if (wakeWord.enabled && wakeWord.supported && desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE && sessionState !== "interrupted") {
-          wakeWord.startWakeWord();
+          wakeWord.resumeWakeWord();
         }
       }
     } catch {
@@ -360,6 +396,10 @@ export default function App() {
       setError("Không thể phát file audio phản hồi.");
       setStatus("error");
       setSessionState("error");
+      // Resume wake word on error too
+      if (wakeWord.enabled && wakeWord.supported && desktopSettings.HANDSFREE_AUTO_RETURN_TO_WAKE_MODE) {
+        wakeWord.resumeWakeWord();
+      }
     }
   };
 

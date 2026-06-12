@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { sendVoiceChat } from "../api";
 import type { AutoConversationStatus, VoiceChatResponse } from "../types";
 import { useSilenceDetection } from "./useSilenceDetection";
+import { play as audioPlay, stop as audioStop } from "../utils/audioPlaybackController";
 
 interface AutoVoiceConversationResult {
   status: AutoConversationStatus;
@@ -42,7 +43,6 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const activeRef = useRef(false);
   const shouldSendRef = useRef(false);
   const speechStateTimerRef = useRef<number | null>(null);
@@ -77,8 +77,7 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
     setIsActive(false);
     setStatus("off");
     clearSpeechStateTimer();
-    audioRef.current?.pause();
-    audioRef.current = null;
+    audioStop();
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
 
@@ -86,6 +85,9 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
     if (recorder && recorder.state !== "inactive") {
       shouldSendRef.current = false;
       recorder.stop();
+      // handleRecorderStop runs async but won't reset isDetectingTurn
+      // because activeRef is already false; reset here explicitly.
+      setIsDetectingTurn(false);
     } else {
       cleanupRecorder();
     }
@@ -96,16 +98,22 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
   const handleRecorderStop = useCallback(async (audioType: string, chunkSnapshot: BlobPart[]) => {
     const currentStream = streamRef.current;
     const shouldSend = shouldSendRef.current;
+    const wasActive = activeRef.current;
 
-    cleanupRecorder();
+    clearSpeechStateTimer();
+    chunksRef.current = [];
 
     if (!currentStream) {
       return;
     }
 
-    if (!activeRef.current || !shouldSend) {
+    if (!wasActive || !shouldSend) {
+      // Cancel case: a new turn may have started (via startListeningTurn),
+      // so don't nullify recorderRef or disable isDetectingTurn.
       return;
     }
+
+    setIsDetectingTurn(false);
 
     const audioBlob = new Blob(chunkSnapshot, { type: audioType });
     if (audioBlob.size === 0) {
@@ -132,35 +140,38 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
       setLastResponse(response);
       setError(null);
 
-      const audio = new Audio(response.audio_url);
-      audioRef.current = audio;
-      audio.onended = () => {
-        audioRef.current = null;
+      setStatus("speaking");
+      try {
+        await audioPlay(response.audio_url);
         if (activeRef.current) {
           restartListeningRef.current?.();
         } else {
           setStatus("off");
         }
-      };
-      audio.onerror = () => {
-        audioRef.current = null;
+      } catch {
         setError("Không thể phát audio phản hồi.");
         setStatus("error");
-      };
-
-      setStatus("speaking");
-      await audio.play();
+      }
     } catch (responseError) {
       abortControllerRef.current = null;
       if (!activeRef.current) {
         return;
       }
 
-      if (responseError instanceof DOMException && responseError.name === "AbortError") {
-        if (activeRef.current) {
-          restartListeningRef.current?.();
+      if (responseError instanceof DOMException) {
+        if (responseError.name === "AbortError") {
+          if (activeRef.current) {
+            restartListeningRef.current?.();
+          }
+          return;
         }
-        return;
+        if (responseError.name === "NotAllowedError") {
+          setError("Trình duyệt chặn phát audio. Bấm 'Dừng trò chuyện' rồi thử lại.");
+          if (activeRef.current) {
+            restartListeningRef.current?.();
+          }
+          return;
+        }
       }
 
       const message =
@@ -168,7 +179,7 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
       setError(message);
       setStatus("error");
     }
-  }, [cleanupRecorder]);
+  }, [clearSpeechStateTimer]);
 
   const startListeningTurn = useCallback(() => {
     const currentStream = streamRef.current;
@@ -259,11 +270,7 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
     clearSpeechStateTimer();
 
     if (status === "speaking") {
-      audioRef.current?.pause();
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-      }
-      audioRef.current = null;
+      audioStop();
       if (activeRef.current) {
         startListeningTurn();
       } else {
@@ -300,11 +307,7 @@ export function useAutoVoiceConversation(): AutoVoiceConversationResult {
     stream,
     enabled: isActive && isDetectingTurn,
     onSpeechStart: () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-        audioRef.current = null;
-      }
+      audioStop();
       setStatus("speech_detected");
       clearSpeechStateTimer();
       speechStateTimerRef.current = window.setTimeout(() => {

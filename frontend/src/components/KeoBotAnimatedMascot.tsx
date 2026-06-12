@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { MascotEmotion, MascotStatus, MascotVisual } from "../utils/keobotMascotState";
 import {
@@ -20,6 +20,8 @@ function getSpeakingFrame(index: number): MascotVisual {
   return (["speaking_1", "speaking_2", "speaking_3"] as const)[index % 3];
 }
 
+const CROSSFADE_DURATION_MS = 300;
+
 export function KeoBotAnimatedMascot({
   status,
   emotion = "neutral",
@@ -29,6 +31,13 @@ export function KeoBotAnimatedMascot({
   const [speakingFrame, setSpeakingFrame] = useState(0);
   const [blinkFrame, setBlinkFrame] = useState<0 | 1 | 2>(0);
   const [assetFailures, setAssetFailures] = useState<string[]>([]);
+  const [currentSrc, setCurrentSrc] = useState<string>("");
+  const [prevSrc, setPrevSrc] = useState<string>("");
+  const [isFading, setIsFading] = useState(false);
+  const [imageOpacity, setImageOpacity] = useState(1);
+  const fadeTimeoutRef = useRef<number>(0);
+  const currentSrcRef = useRef(currentSrc);
+  currentSrcRef.current = currentSrc;
 
   useEffect(() => {
     if (status !== "speaking") {
@@ -106,10 +115,52 @@ export function KeoBotAnimatedMascot({
     return baseVisual;
   }, [baseVisual, blinkFrame, speakingFrame, status]);
 
-  const src = useMemo(() => {
+  const targetSrc = useMemo(() => {
     const chain = getMascotFallbackChain(activeVisual);
     return chain.find((path) => !assetFailures.includes(path)) ?? getMascotAssetPath("idle");
   }, [activeVisual, assetFailures]);
+
+  // Crossfade: preload new image, then swap with fade
+  useEffect(() => {
+    if (!targetSrc || targetSrc === currentSrcRef.current) {
+      return;
+    }
+    if (!currentSrcRef.current) {
+      setCurrentSrc(targetSrc);
+      return;
+    }
+    // Preload new image
+    const img = new Image();
+    const srcToLoad = targetSrc;
+    img.onload = () => {
+      const prev = currentSrcRef.current;
+      if (srcToLoad !== targetSrc) {
+        return; // stale load
+      }
+      setPrevSrc(prev);
+      setCurrentSrc(srcToLoad);
+      setIsFading(true);
+      setImageOpacity(0);
+      // Allow browser to paint opacity=0 before fading in
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setImageOpacity(1);
+        });
+      });
+      window.clearTimeout(fadeTimeoutRef.current);
+      fadeTimeoutRef.current = window.setTimeout(() => {
+        setIsFading(false);
+        setPrevSrc("");
+      }, CROSSFADE_DURATION_MS);
+    };
+    img.onerror = () => {
+      setAssetFailures((prev) => (prev.includes(srcToLoad) ? prev : [...prev, srcToLoad]));
+    };
+    img.src = srcToLoad;
+    return () => {
+      window.clearTimeout(fadeTimeoutRef.current);
+    };
+  }, [targetSrc]);
 
   const stageClasses = [
     "keobot-stage",
@@ -136,13 +187,22 @@ export function KeoBotAnimatedMascot({
         <div className={stageClasses}>
           <div className="keobot-stage-glow" />
           <div className="keobot-art">
+            {prevSrc && isFading && (
+              <img
+                className="keobot-image keobot-image--prev"
+                src={prevSrc}
+                alt=""
+                aria-hidden="true"
+              />
+            )}
             <img
-              key={src}
               className="keobot-image"
-              src={src}
+              src={currentSrc || targetSrc}
               alt={`Kẹo Thông Minh mascot - ${status} - ${emotion}`}
+              style={{ opacity: imageOpacity }}
               onError={() => {
-                setAssetFailures((current) => (current.includes(src) ? current : [...current, src]));
+                const failingSrc = currentSrc || targetSrc;
+                setAssetFailures((current) => (current.includes(failingSrc) ? current : [...current, failingSrc]));
               }}
             />
           </div>

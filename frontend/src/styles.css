@@ -312,6 +312,16 @@ img {
   object-fit: contain;
   object-position: center top;
   filter: drop-shadow(0 24px 34px rgba(0, 0, 0, 0.22));
+  transition: opacity 300ms ease;
+  opacity: 1;
+}
+
+.keobot-image--prev {
+  position: absolute;
+  inset: 26px 18px 0;
+  z-index: 0;
+  opacity: 1;
+  pointer-events: none;
 }
 
 .keobot-stage.is-idle .keobot-image {

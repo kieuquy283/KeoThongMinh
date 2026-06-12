@@ -214,8 +214,6 @@ export const VoiceRecorder = forwardRef<VoiceRecorderHandle, VoiceRecorderProps>
   };
 
   const stopRecording = () => {
-    recordingRef.current = false;
-    abortControllerRef.current?.abort();
     mediaRecorderRef.current?.stop();
   };
 
