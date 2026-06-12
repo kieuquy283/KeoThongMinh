@@ -4,7 +4,39 @@ import asyncio
 import json
 
 import pytest
-from app.services.stream_manager import StreamManager, StreamSession, StreamState, get_stream_manager
+from app.services.stream_manager import (
+    StreamManager,
+    StreamSession,
+    StreamState,
+    InvalidTransitionError,
+    get_stream_manager,
+    validate_transition,
+)
+
+
+TRANSITION_MATRIX: dict[tuple[StreamState, StreamState], bool] = {
+    (StreamState.idle, StreamState.streaming): True,
+    (StreamState.idle, StreamState.completed): False,
+    (StreamState.idle, StreamState.interrupted): False,
+    (StreamState.idle, StreamState.replanning): False,
+    (StreamState.streaming, StreamState.completed): True,
+    (StreamState.streaming, StreamState.interrupted): True,
+    (StreamState.streaming, StreamState.replanning): True,
+    (StreamState.streaming, StreamState.idle): False,
+    (StreamState.streaming, StreamState.streaming): False,
+    (StreamState.interrupted, StreamState.idle): True,
+    (StreamState.interrupted, StreamState.replanning): True,
+    (StreamState.interrupted, StreamState.streaming): False,
+    (StreamState.interrupted, StreamState.completed): False,
+    (StreamState.replanning, StreamState.streaming): True,
+    (StreamState.replanning, StreamState.completed): True,
+    (StreamState.replanning, StreamState.interrupted): True,
+    (StreamState.replanning, StreamState.idle): False,
+    (StreamState.completed, StreamState.idle): True,
+    (StreamState.completed, StreamState.streaming): False,
+    (StreamState.completed, StreamState.interrupted): False,
+    (StreamState.completed, StreamState.replanning): False,
+}
 
 
 class TestStreamSession:
@@ -26,12 +58,23 @@ class TestStreamSession:
         session.add_token("world")
         assert session.partial_text() == "Hello world"
 
-    def test_cancel(self):
+    def test_interrupt(self):
         session = StreamSession(session_id="test")
         session.start()
-        session.cancel()
-        assert session.state == StreamState.cancelled
+        session.interrupt()
+        assert session.state == StreamState.interrupted
         assert session.is_cancelled()
+
+    def test_interrupt_from_streaming_succeeds(self):
+        session = StreamSession(session_id="test")
+        session.start()
+        session.interrupt()
+        assert session.state == StreamState.interrupted
+
+    def test_interrupt_from_idle_raises(self):
+        session = StreamSession(session_id="test")
+        with pytest.raises(InvalidTransitionError):
+            session.interrupt()
 
     def test_complete(self):
         session = StreamSession(session_id="test")
@@ -39,15 +82,71 @@ class TestStreamSession:
         session.complete()
         assert session.state == StreamState.completed
 
+    def test_complete_from_idle_raises(self):
+        session = StreamSession(session_id="test")
+        with pytest.raises(InvalidTransitionError):
+            session.complete()
+
     def test_reset(self):
         session = StreamSession(session_id="test")
         session.start()
         session.add_token("some text")
-        session.cancel()
+        session.interrupt()
         session.reset()
         assert session.state == StreamState.idle
         assert session.tokens == []
         assert not session.is_cancelled()
+        assert session.replan_context is None
+
+    def test_start_after_interrupted(self):
+        session = StreamSession(session_id="test")
+        session.start()
+        session.interrupt()
+        session.start()
+        assert session.state == StreamState.streaming
+
+    def test_start_after_completed(self):
+        session = StreamSession(session_id="test")
+        session.start()
+        session.complete()
+        session.start()
+        assert session.state == StreamState.streaming
+
+    def test_replan_context(self):
+        session = StreamSession(session_id="test")
+        session.replan_context = {"intent": "weather", "missing": "location"}
+        session.start()
+        session.interrupt()
+        assert session.replan_context is not None
+        session.reset()
+        assert session.replan_context is None
+
+    def test_transition_to(self):
+        session = StreamSession(session_id="test")
+        session.transition_to(StreamState.streaming)
+        assert session.state == StreamState.streaming
+
+    def test_transition_to_invalid_raises(self):
+        session = StreamSession(session_id="test")
+        with pytest.raises(InvalidTransitionError):
+            session.transition_to(StreamState.completed)
+
+
+class TestTransitionValidation:
+    def test_all_transitions(self):
+        for (from_state, to_state), expected_valid in TRANSITION_MATRIX.items():
+            if expected_valid:
+                validate_transition(from_state, to_state)
+            else:
+                with pytest.raises(InvalidTransitionError):
+                    validate_transition(from_state, to_state)
+
+    def test_every_state_has_transition_rules(self):
+        for state in StreamState:
+            assert state in TRANSITION_MATRIX or any(
+                (state, other) in TRANSITION_MATRIX or (other, state) in TRANSITION_MATRIX
+                for other in StreamState
+            )
 
 
 class TestStreamManager:
@@ -79,11 +178,26 @@ class TestStreamManager:
         session = mgr.create_session("s1")
         session.start()
         assert mgr.cancel("s1") is True
-        assert session.state == StreamState.cancelled
+        assert session.state == StreamState.interrupted
+
+    def test_cancel_returns_true_for_replanning(self):
+        mgr = StreamManager()
+        session = mgr.create_session("s1")
+        session.start()
+        session.transition_to(StreamState.replanning)
+        assert mgr.cancel("s1") is True
+        assert session.state == StreamState.interrupted
 
     def test_cancel_returns_false_for_nonexistent(self):
         mgr = StreamManager()
         assert mgr.cancel("ghost") is False
+
+    def test_cancel_returns_false_for_completed(self):
+        mgr = StreamManager()
+        session = mgr.create_session("s1")
+        session.transition_to(StreamState.streaming)
+        session.complete()
+        assert mgr.cancel("s1") is False
 
     def test_remove_session(self):
         mgr = StreamManager()
@@ -91,12 +205,41 @@ class TestStreamManager:
         mgr.remove_session("s1")
         assert mgr.get_session("s1") is None
 
-    def test_active_count(self):
+    def test_active_count_zero(self):
         mgr = StreamManager()
         assert mgr.active_count() == 0
+
+    def test_active_count_counts_streaming(self):
+        mgr = StreamManager()
         s1 = mgr.create_session("s1")
         s1.start()
         assert mgr.active_count() == 1
+
+    def test_active_count_counts_replanning(self):
+        mgr = StreamManager()
+        s1 = mgr.create_session("s1")
+        s1.start()
+        s1.transition_to(StreamState.replanning)
+        assert mgr.active_count() == 1
+
+    def test_active_count_ignores_interrupted(self):
+        mgr = StreamManager()
+        s1 = mgr.create_session("s1")
+        s1.start()
+        s1.interrupt()
+        assert mgr.active_count() == 0
+
+    def test_active_count_ignores_completed(self):
+        mgr = StreamManager()
+        s1 = mgr.create_session("s1")
+        s1.start()
+        s1.complete()
+        assert mgr.active_count() == 0
+
+    def test_active_count_multiple_sessions(self):
+        mgr = StreamManager()
+        s1 = mgr.create_session("s1")
+        s1.start()
         s2 = mgr.create_session("s2")
         s2.start()
         assert mgr.active_count() == 2
@@ -107,6 +250,19 @@ class TestStreamManager:
         mgr1 = get_stream_manager()
         mgr2 = get_stream_manager()
         assert mgr1 is mgr2
+
+    def test_session_isolation(self):
+        mgr = StreamManager()
+        s1 = mgr.create_session("s1")
+        s2 = mgr.create_session("s2")
+        s1.start()
+        assert s1.state == StreamState.streaming
+        assert s2.state == StreamState.idle
+        s2.start()
+        assert s2.state == StreamState.streaming
+        s1.complete()
+        assert s1.state == StreamState.completed
+        assert s2.state == StreamState.streaming
 
 
 class TestStreamEndpoint:
@@ -139,7 +295,7 @@ class TestStreamEndpoint:
         data = resp.json()
         assert data["ok"] is True
         assert data["session_id"] == "cancel-me"
-        assert data["state"] == "cancelled"
+        assert data["state"] == "interrupted"
 
 
 class TestPhase2Interrupt:
@@ -160,8 +316,8 @@ class TestPhase2Interrupt:
         resp = client.post("/text-chat", json={"message": "stop!", "session_id": session_id})
         assert resp.status_code == 200
 
-        assert stream_sesh.state in (StreamState.cancelled, StreamState.idle)
-        assert stream_sesh.is_cancelled() or stream_sesh.state == StreamState.idle
+        assert stream_sesh.state == StreamState.idle
+        assert not stream_sesh.is_cancelled()
 
         ctx = mgr.get_context(session_id, limit=20)
         interrupted_turns = [t for t in ctx if "[interrupted]" in t["text"]]
@@ -247,7 +403,7 @@ class TestPhase2Interrupt:
         resp = client.post(f"/stream/{session_id}/cancel")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["state"] == "cancelled"
+        assert data["state"] == "interrupted"
 
         ctx = mgr.get_context(session_id, limit=20)
         interrupted_turns = [t for t in ctx if "[interrupted]" in t["text"]]
@@ -278,3 +434,131 @@ class TestStreamManagerReset:
         session.reset()
         assert session.state == StreamState.idle
         assert session.partial_text() == ""
+
+
+class TestStateMachine:
+    def test_idle_to_streaming(self):
+        session = StreamSession(session_id="sm1")
+        session.start()
+        assert session.state == StreamState.streaming
+
+    def test_streaming_to_completed(self):
+        session = StreamSession(session_id="sm2")
+        session.start()
+        session.complete()
+        assert session.state == StreamState.completed
+
+    def test_streaming_to_interrupted(self):
+        session = StreamSession(session_id="sm3")
+        session.start()
+        session.interrupt()
+        assert session.state == StreamState.interrupted
+
+    def test_streaming_to_replanning(self):
+        session = StreamSession(session_id="sm4")
+        session.start()
+        session.transition_to(StreamState.replanning)
+        assert session.state == StreamState.replanning
+
+    def test_interrupted_to_idle(self):
+        session = StreamSession(session_id="sm5")
+        session.start()
+        session.interrupt()
+        session.reset()
+        assert session.state == StreamState.idle
+
+    def test_interrupted_to_replanning(self):
+        session = StreamSession(session_id="sm6")
+        session.start()
+        session.interrupt()
+        session.transition_to(StreamState.replanning)
+        assert session.state == StreamState.replanning
+
+    def test_replanning_to_streaming(self):
+        session = StreamSession(session_id="sm7")
+        session.start()
+        session.interrupt()
+        session.transition_to(StreamState.replanning)
+        session.start()
+        assert session.state == StreamState.streaming
+
+    def test_replanning_to_completed(self):
+        session = StreamSession(session_id="sm8")
+        session.start()
+        session.transition_to(StreamState.replanning)
+        session.complete()
+        assert session.state == StreamState.completed
+
+    def test_completed_to_idle(self):
+        session = StreamSession(session_id="sm9")
+        session.start()
+        session.complete()
+        session.reset()
+        assert session.state == StreamState.idle
+
+    def test_cannot_interrupt_from_idle(self):
+        session = StreamSession(session_id="sm10")
+        with pytest.raises(InvalidTransitionError):
+            session.interrupt()
+
+    def test_cannot_interrupt_from_completed(self):
+        session = StreamSession(session_id="sm11")
+        session.start()
+        session.complete()
+        with pytest.raises(InvalidTransitionError):
+            session.interrupt()
+
+    def test_can_interrupt_from_replanning(self):
+        session = StreamSession(session_id="sm12")
+        session.start()
+        session.transition_to(StreamState.replanning)
+        session.interrupt()
+        assert session.state == StreamState.interrupted
+
+    def test_cannot_complete_from_idle(self):
+        session = StreamSession(session_id="sm13")
+        with pytest.raises(InvalidTransitionError):
+            session.complete()
+
+    def test_cannot_complete_from_interrupted(self):
+        session = StreamSession(session_id="sm14")
+        session.start()
+        session.interrupt()
+        with pytest.raises(InvalidTransitionError):
+            session.complete()
+
+    def test_start_while_streaming_auto_resets(self):
+        session = StreamSession(session_id="sm15")
+        session.start()
+        session.add_token("some text")
+        session.start()
+        assert session.state == StreamState.streaming
+        assert session.tokens == []
+
+    def test_start_from_interrupted_auto_resets(self):
+        session = StreamSession(session_id="sm16")
+        session.start()
+        session.interrupt()
+        session.start()
+        assert session.state == StreamState.streaming
+        assert not session.is_cancelled()
+
+    def test_streaming_to_idle_raises(self):
+        session = StreamSession(session_id="sm17")
+        session.start()
+        with pytest.raises(InvalidTransitionError):
+            session.transition_to(StreamState.idle)
+
+    def test_interrupted_to_streaming_raises(self):
+        session = StreamSession(session_id="sm18")
+        session.start()
+        session.interrupt()
+        with pytest.raises(InvalidTransitionError):
+            session.transition_to(StreamState.streaming)
+
+    def test_interrupted_to_completed_raises(self):
+        session = StreamSession(session_id="sm19")
+        session.start()
+        session.interrupt()
+        with pytest.raises(InvalidTransitionError):
+            session.complete()

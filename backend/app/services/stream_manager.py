@@ -9,8 +9,30 @@ from typing import Any
 class StreamState(str, Enum):
     idle = "idle"
     streaming = "streaming"
+    interrupted = "interrupted"
+    replanning = "replanning"
     completed = "completed"
-    cancelled = "cancelled"
+
+
+_VALID_TRANSITIONS: dict[StreamState, set[StreamState]] = {
+    StreamState.idle: {StreamState.streaming},
+    StreamState.streaming: {StreamState.completed, StreamState.interrupted, StreamState.replanning},
+    StreamState.interrupted: {StreamState.idle, StreamState.replanning},
+    StreamState.replanning: {StreamState.streaming, StreamState.completed, StreamState.interrupted},
+    StreamState.completed: {StreamState.idle},
+}
+
+
+class InvalidTransitionError(Exception):
+    pass
+
+
+def validate_transition(from_state: StreamState, to_state: StreamState) -> None:
+    allowed = _VALID_TRANSITIONS.get(from_state)
+    if allowed is None or to_state not in allowed:
+        raise InvalidTransitionError(
+            f"Invalid transition: {from_state.value} -> {to_state.value}"
+        )
 
 
 @dataclass
@@ -19,6 +41,11 @@ class StreamSession:
     state: StreamState = StreamState.idle
     tokens: list[str] = field(default_factory=list)
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    replan_context: dict[str, Any] | None = None
+
+    def transition_to(self, target: StreamState) -> None:
+        validate_transition(self.state, target)
+        self.state = target
 
     def add_token(self, token: str) -> None:
         self.tokens.append(token)
@@ -26,24 +53,30 @@ class StreamSession:
     def partial_text(self) -> str:
         return "".join(self.tokens)
 
-    def cancel(self) -> None:
-        self.state = StreamState.cancelled
+    def interrupt(self) -> None:
+        self.transition_to(StreamState.interrupted)
         self.cancel_event.set()
 
     def is_cancelled(self) -> bool:
         return self.cancel_event.is_set()
 
     def start(self) -> None:
-        self.state = StreamState.streaming
+        allowed = _VALID_TRANSITIONS.get(self.state)
+        if allowed and StreamState.streaming in allowed:
+            self.transition_to(StreamState.streaming)
+        else:
+            self.reset()
+            self.transition_to(StreamState.streaming)
         self.cancel_event.clear()
 
     def complete(self) -> None:
-        self.state = StreamState.completed
+        self.transition_to(StreamState.completed)
 
     def reset(self) -> None:
         self.state = StreamState.idle
         self.tokens.clear()
         self.cancel_event.clear()
+        self.replan_context = None
 
 
 class StreamManager:
@@ -66,9 +99,9 @@ class StreamManager:
 
     def cancel(self, session_id: str) -> bool:
         session = self._sessions.get(session_id)
-        if session is None or session.state == StreamState.idle:
+        if session is None or session.state not in (StreamState.streaming, StreamState.replanning):
             return False
-        session.cancel()
+        session.interrupt()
         return True
 
     def remove_session(self, session_id: str) -> None:
@@ -77,7 +110,7 @@ class StreamManager:
     def active_count(self) -> int:
         return sum(
             1 for s in self._sessions.values()
-            if s.state == StreamState.streaming
+            if s.state in (StreamState.streaming, StreamState.replanning)
         )
 
 

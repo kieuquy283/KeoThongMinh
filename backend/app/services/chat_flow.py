@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from typing import AsyncIterator
 
 from app.providers.llm import generate_conversation_summary, generate_keobot_response, generate_keobot_tool_response
-from app.providers.llm_stream import stream_keobot_response
+from app.providers.llm_stream import stream_keobot_response, stream_keobot_tool_response
+from app.services.async_tool_executor import AsyncToolExecutor
 from app.services.stream_manager import StreamState, get_stream_manager
 from app.services.conversation_context import get_conversation_manager
 from app.services.knowledge_store import get_knowledge_store
@@ -33,15 +36,40 @@ def _build_conversation_context(turns: list[dict[str, str]], summary: str | None
     return "\n".join(parts)
 
 
+TOOL_EVENT_PREFIX = "__tool__:"
+
+_THINKING_MESSAGES = {
+    "weather": "Minh dang kiem tra thoi tiet",
+    "time": "Minh dang xem gio",
+    "currency": "Minh dang tra cuu ty gia",
+    "news_search": "Minh dang tim tin",
+    "general_search": "Minh dang tra cuu",
+}
+_FALLBACK_THINKING = "Minh dang xu ly"
+
+
+async def _yield_thinking(
+    intent: str,
+    cancel_check: Any = None,
+    interval: float = 0.04,
+) -> AsyncIterator[str]:
+    text = _THINKING_MESSAGES.get(intent, _FALLBACK_THINKING)
+    for ch in text:
+        if cancel_check and cancel_check():
+            return
+        yield ch
+        await asyncio.sleep(interval)
+
+
 def _interrupt_active_stream(session_id: str) -> bool:
-    """If there's an active stream for this session, cancel it and preserve partial output."""
+    """If there's an active stream for this session, interrupt it and preserve partial output."""
     stream_mgr = get_stream_manager()
     session = stream_mgr.get_session(session_id)
     if session is None or session.state != StreamState.streaming:
         return False
 
     partial = session.partial_text()
-    session.cancel()
+    session.interrupt()
 
     if partial.strip():
         mgr = get_conversation_manager()
@@ -403,6 +431,89 @@ async def stream_chat_response(
         mgr.touch(session_id)
 
     memory_context = get_memory_store().get_memory_context()
+    tool_route = detect_tool_intent(resolved_text, context_turns)
+
+    if tool_route.intent != "none" and tool_route.confidence >= TOOL_CONFIDENCE_THRESHOLD:
+        executor = AsyncToolExecutor()
+        execution = await executor.execute(tool_route.intent, tool_route.query, tool_route.entities)
+
+        yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'running'}, ensure_ascii=False)}"
+
+        async for ch in _yield_thinking(tool_route.intent, cancel_check=stream_session.is_cancelled):
+            if stream_session.is_cancelled():
+                break
+            stream_session.add_token(ch)
+            yield ch
+
+        result = await execution.wait()
+
+        if stream_session.is_cancelled():
+            return
+
+        if result is None or _tool_is_unavailable(result):
+            yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'failed', 'error': execution.error or 'unavailable'}, ensure_ascii=False)}"
+            bot_text = _build_tool_unavailable_message(tool_route.intent)
+            for ch in bot_text:
+                if stream_session.is_cancelled():
+                    break
+                stream_session.add_token(ch)
+                yield ch
+            if session_id and not stream_session.is_cancelled():
+                mgr.add_bot_turn(session_id, bot_text)
+            if stream_session.state == StreamState.streaming:
+                stream_session.complete()
+            return
+
+        missing = _detect_missing_info(tool_route.intent, execution.entities, result)
+        if missing:
+            stream_session.transition_to(StreamState.replanning)
+            yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'completed', 'missing_info': True}, ensure_ascii=False)}"
+            for ch in missing:
+                if stream_session.is_cancelled():
+                    break
+                stream_session.add_token(ch)
+                yield ch
+            if session_id and not stream_session.is_cancelled():
+                mgr.add_bot_turn(session_id, missing)
+            if stream_session.state == StreamState.replanning:
+                stream_session.complete()
+            return
+
+        sources = _build_sources(tool_route.intent, result)
+        updated_at = result.get("updated_at")
+
+        yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'completed'}, ensure_ascii=False)}"
+
+        session_obj = mgr.get_session(session_id) if session_id else None
+        session_summary = session_obj.summary if session_obj else None
+        context_str = _build_conversation_context(context_turns, session_summary)
+
+        full_response = ""
+        async for token in stream_keobot_tool_response(
+            resolved_text, tool_route.intent, result,
+            conversation_context=context_str or None,
+            cancel_check=stream_session.is_cancelled,
+        ):
+            if stream_session.is_cancelled():
+                break
+            stream_session.add_token(token)
+            full_response += token
+            yield token
+
+        bot_text = ""
+        if full_response.strip():
+            try:
+                parsed = json.loads(full_response)
+                bot_text = parsed.get("bot_text", full_response)
+            except (json.JSONDecodeError, TypeError):
+                bot_text = full_response
+
+        if session_id and not stream_session.is_cancelled() and bot_text.strip():
+            mgr.add_bot_turn(session_id, bot_text)
+
+        if stream_session.state == StreamState.streaming:
+            stream_session.complete()
+        return
 
     session_obj = mgr.get_session(session_id) if session_id else None
     session_summary = session_obj.summary if session_obj else None
@@ -419,7 +530,7 @@ async def stream_chat_response(
         stream_session.add_token(token)
         yield token
 
-    if stream_session.state != StreamState.cancelled:
+    if stream_session.state == StreamState.streaming:
         stream_session.complete()
 
 
