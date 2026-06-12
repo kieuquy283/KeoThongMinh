@@ -53,7 +53,8 @@ from app.schemas import (
 )
 from app.services.chat_flow import generate_chat_response, stream_chat_response
 from app.services.document_importer import import_document
-from app.services.stream_manager import get_stream_manager
+from app.services.event_bus import Event, EventType, get_event_bus
+from app.services.stream_manager import StreamState, get_stream_manager
 from fastapi.responses import StreamingResponse
 from app.services.entity_extractor import extract_entities
 from app.services.knowledge_store import get_knowledge_store
@@ -491,6 +492,8 @@ async def mark_reminder_triggered(reminder_id: int) -> ReminderResponse:
 
 @app.post("/text-chat", response_model=TextChatResponse)
 async def text_chat(payload: TextChatRequest) -> TextChatResponse:
+    bus = get_event_bus()
+    bus.publish(Event(type=EventType.user_message, payload={"text": payload.message}, session_id=payload.session_id))
     try:
         chat_response = await generate_chat_response(payload.message, session_id=payload.session_id)
     except RuntimeError as exc:
@@ -516,6 +519,8 @@ async def _stream_events(payload: TextChatRequest):
 
 @app.post("/text-chat/stream")
 async def text_chat_stream(payload: TextChatRequest):
+    bus = get_event_bus()
+    bus.publish(Event(type=EventType.user_message, payload={"text": payload.message}, session_id=payload.session_id))
     stream_mgr = get_stream_manager()
     stream_mgr.get_or_create(payload.session_id or "_default")
     return StreamingResponse(
@@ -532,11 +537,12 @@ async def text_chat_stream(payload: TextChatRequest):
 @app.post("/stream/{session_id}/cancel")
 async def cancel_stream(session_id: str):
     stream_mgr = get_stream_manager()
-    cancelled = stream_mgr.cancel(session_id)
-    if not cancelled:
-        raise HTTPException(status_code=404, detail="No active stream found for this session.")
     session = stream_mgr.get_session(session_id)
-    state = session.state if session else "idle"
+    if session is None or session.state not in (StreamState.streaming, StreamState.replanning):
+        raise HTTPException(status_code=404, detail="No active stream found for this session.")
+    bus = get_event_bus()
+    bus.publish(Event(type=EventType.cancel, payload={}, session_id=session_id))
+    state = session.state
     return {
         "ok": True,
         "session_id": session_id,

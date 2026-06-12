@@ -82,6 +82,38 @@ class StreamSession:
 class StreamManager:
     def __init__(self) -> None:
         self._sessions: dict[str, StreamSession] = {}
+        self._started = False
+
+    def subscribe_to_events(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        from app.services.event_bus import EventType, get_event_bus
+        bus = get_event_bus()
+        bus.subscribe(EventType.cancel, self._on_cancel_event)
+        bus.subscribe(EventType.interrupt, self._on_interrupt_event)
+
+    def _on_cancel_event(self, event: Event) -> None:
+        session_id = event.session_id
+        if session_id:
+            self.cancel(session_id)
+
+    def _on_interrupt_event(self, event: Event) -> None:
+        session_id = event.session_id
+        if session_id:
+            session = self._sessions.get(session_id)
+            if session and session.state in (StreamState.streaming, StreamState.replanning):
+                session.interrupt()
+
+    def _emit(self, event_type: str, session_id: str | None = None, payload: dict[str, Any] | None = None) -> None:
+        from app.services.event_bus import Event as EBEvent, EventType as ET, get_event_bus
+        try:
+            et = ET(event_type)
+        except ValueError:
+            return
+        bus = get_event_bus()
+        ev = EBEvent(type=et, payload=payload or {}, session_id=session_id)
+        bus.publish(ev)
 
     def create_session(self, session_id: str) -> StreamSession:
         session = StreamSession(session_id=session_id)
@@ -95,6 +127,7 @@ class StreamManager:
         session = self._sessions.get(session_id)
         if session is None:
             session = self.create_session(session_id)
+        self.subscribe_to_events()
         return session
 
     def cancel(self, session_id: str) -> bool:
@@ -102,6 +135,7 @@ class StreamManager:
         if session is None or session.state not in (StreamState.streaming, StreamState.replanning):
             return False
         session.interrupt()
+        self._emit("interrupt", session_id=session_id)
         return True
 
     def remove_session(self, session_id: str) -> None:

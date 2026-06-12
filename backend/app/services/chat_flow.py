@@ -10,6 +10,7 @@ from typing import AsyncIterator
 from app.providers.llm import generate_conversation_summary, generate_keobot_response, generate_keobot_tool_response
 from app.providers.llm_stream import stream_keobot_response, stream_keobot_tool_response
 from app.services.async_tool_executor import AsyncToolExecutor
+from app.services.event_bus import Event, EventType, get_event_bus
 from app.services.stream_manager import StreamState, get_stream_manager
 from app.services.conversation_context import get_conversation_manager
 from app.services.knowledge_store import get_knowledge_store
@@ -409,6 +410,47 @@ def _detect_missing_info(intent: str, entities: dict[str, Any], tool_result: dic
     return None
 
 
+class StreamOrchestrator:
+    def __init__(self) -> None:
+        self._tool_futures: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._started = False
+
+    def subscribe_to_events(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        bus = get_event_bus()
+        bus.subscribe(EventType.tool_result, self._on_tool_result)
+
+    def _on_tool_result(self, event: Event) -> None:
+        session_id = event.session_id
+        if session_id and session_id in self._tool_futures:
+            future = self._tool_futures.pop(session_id)
+            if not future.done():
+                future.set_result(event.payload)
+
+    async def wait_for_tool_result(self, session_id: str) -> dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._tool_futures[session_id] = future
+        return await future
+
+    def cancel_wait(self, session_id: str) -> None:
+        future = self._tool_futures.pop(session_id, None)
+        if future and not future.done():
+            future.cancel()
+
+
+_orchestrator: StreamOrchestrator | None = None
+
+
+def get_orchestrator() -> StreamOrchestrator:
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = StreamOrchestrator()
+    return _orchestrator
+
+
 async def stream_chat_response(
     user_text: str,
     session_id: str | None = None,
@@ -416,6 +458,7 @@ async def stream_chat_response(
     if session_id:
         _interrupt_active_stream(session_id)
 
+    bus = get_event_bus()
     stream_mgr = get_stream_manager()
     stream_session = stream_mgr.get_or_create(session_id or "_default")
     stream_session.start()
@@ -430,12 +473,20 @@ async def stream_chat_response(
         context_turns = mgr.get_context(session_id, limit=10)
         mgr.touch(session_id)
 
+    bus.publish(Event(type=EventType.stream_start, payload={"text": resolved_text}, session_id=session_id))
+
     memory_context = get_memory_store().get_memory_context()
     tool_route = detect_tool_intent(resolved_text, context_turns)
 
     if tool_route.intent != "none" and tool_route.confidence >= TOOL_CONFIDENCE_THRESHOLD:
-        executor = AsyncToolExecutor()
-        execution = await executor.execute(tool_route.intent, tool_route.query, tool_route.entities)
+        orchestrator = get_orchestrator()
+        orchestrator.subscribe_to_events()
+
+        bus.publish(Event(type=EventType.tool_call, payload={
+            "intent": tool_route.intent,
+            "query": tool_route.query,
+            "entities": tool_route.entities,
+        }, session_id=session_id))
 
         yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'running'}, ensure_ascii=False)}"
 
@@ -445,13 +496,17 @@ async def stream_chat_response(
             stream_session.add_token(ch)
             yield ch
 
-        result = await execution.wait()
+        payload = await orchestrator.wait_for_tool_result(session_id or "_default")
 
         if stream_session.is_cancelled():
             return
 
+        result = payload.get("result")
+        error = payload.get("error")
+        exec_entities = payload.get("entities", tool_route.entities)
+
         if result is None or _tool_is_unavailable(result):
-            yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'failed', 'error': execution.error or 'unavailable'}, ensure_ascii=False)}"
+            yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'failed', 'error': error or 'unavailable'}, ensure_ascii=False)}"
             bot_text = _build_tool_unavailable_message(tool_route.intent)
             for ch in bot_text:
                 if stream_session.is_cancelled():
@@ -462,11 +517,13 @@ async def stream_chat_response(
                 mgr.add_bot_turn(session_id, bot_text)
             if stream_session.state == StreamState.streaming:
                 stream_session.complete()
+            bus.publish(Event(type=EventType.stream_end, payload={"tool": tool_route.intent, "status": "failed"}, session_id=session_id))
             return
 
-        missing = _detect_missing_info(tool_route.intent, execution.entities, result)
+        missing = _detect_missing_info(tool_route.intent, exec_entities, result)
         if missing:
             stream_session.transition_to(StreamState.replanning)
+            bus.publish(Event(type=EventType.replanning, payload={"tool": tool_route.intent, "reason": "missing_info"}, session_id=session_id))
             yield f"{TOOL_EVENT_PREFIX}{json.dumps({'tool': tool_route.intent, 'status': 'completed', 'missing_info': True}, ensure_ascii=False)}"
             for ch in missing:
                 if stream_session.is_cancelled():
@@ -477,6 +534,7 @@ async def stream_chat_response(
                 mgr.add_bot_turn(session_id, missing)
             if stream_session.state == StreamState.replanning:
                 stream_session.complete()
+            bus.publish(Event(type=EventType.stream_end, payload={"tool": tool_route.intent, "status": "replanning"}, session_id=session_id))
             return
 
         sources = _build_sources(tool_route.intent, result)
@@ -497,6 +555,7 @@ async def stream_chat_response(
             if stream_session.is_cancelled():
                 break
             stream_session.add_token(token)
+            bus.publish(Event(type=EventType.llm_token, payload={"token": token}, session_id=session_id))
             full_response += token
             yield token
 
@@ -513,6 +572,7 @@ async def stream_chat_response(
 
         if stream_session.state == StreamState.streaming:
             stream_session.complete()
+        bus.publish(Event(type=EventType.stream_end, payload={"tool": tool_route.intent, "status": "completed"}, session_id=session_id))
         return
 
     session_obj = mgr.get_session(session_id) if session_id else None
@@ -528,10 +588,12 @@ async def stream_chat_response(
         if stream_session.is_cancelled():
             break
         stream_session.add_token(token)
+        bus.publish(Event(type=EventType.llm_token, payload={"token": token}, session_id=session_id))
         yield token
 
     if stream_session.state == StreamState.streaming:
         stream_session.complete()
+    bus.publish(Event(type=EventType.stream_end, payload={"status": "completed"}, session_id=session_id))
 
 
 def _build_tool_unavailable_message(intent: str) -> str:

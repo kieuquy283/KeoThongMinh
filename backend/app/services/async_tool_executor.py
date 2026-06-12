@@ -114,6 +114,46 @@ class ToolExecution:
 class AsyncToolExecutor:
     def __init__(self) -> None:
         self._executions: list[ToolExecution] = []
+        self._started = False
+
+    def subscribe_to_events(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        from app.services.event_bus import EventType, get_event_bus
+        bus = get_event_bus()
+        bus.subscribe(EventType.tool_call, self._on_tool_call_event)
+
+    def _on_tool_call_event(self, event: Any) -> None:
+        payload = event.payload or {}
+        intent = payload.get("intent", "")
+        query = payload.get("query", "")
+        entities = payload.get("entities", {})
+        session_id = event.session_id
+        if not intent:
+            return
+        asyncio.create_task(self._execute_and_emit(intent, query, entities, session_id))
+
+    async def _execute_and_emit(
+        self,
+        intent: str,
+        query: str,
+        entities: dict[str, Any],
+        session_id: str | None = None,
+        timeout: float = _TOOL_TIMEOUT,
+    ) -> None:
+        from app.services.event_bus import Event, EventType, get_event_bus
+        execution = await self.execute(intent, query, entities, timeout=timeout)
+        result = await execution.wait()
+        bus = get_event_bus()
+        payload: dict[str, Any] = {
+            "intent": intent,
+            "query": query,
+            "entities": execution.entities,
+            "result": result,
+            "error": execution.error,
+        }
+        bus.publish(Event(type=EventType.tool_result, payload=payload, session_id=session_id))
 
     async def execute(
         self,
