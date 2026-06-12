@@ -33,6 +33,24 @@ def _build_conversation_context(turns: list[dict[str, str]], summary: str | None
     return "\n".join(parts)
 
 
+def _interrupt_active_stream(session_id: str) -> bool:
+    """If there's an active stream for this session, cancel it and preserve partial output."""
+    stream_mgr = get_stream_manager()
+    session = stream_mgr.get_session(session_id)
+    if session is None or session.state != StreamState.streaming:
+        return False
+
+    partial = session.partial_text()
+    session.cancel()
+
+    if partial.strip():
+        mgr = get_conversation_manager()
+        mgr.add_bot_turn(session_id, f"[interrupted] {partial.strip()}")
+
+    session.reset()
+    return True
+
+
 async def generate_chat_response(
     user_text: str,
     session_id: str | None = None,
@@ -42,6 +60,7 @@ async def generate_chat_response(
     mgr = get_conversation_manager()
 
     if session_id:
+        _interrupt_active_stream(session_id)
         resolved_text = mgr.resolve_follow_up(session_id, user_text)
         mgr.add_user_turn(session_id, resolved_text)
         session = mgr.get_session(session_id)
@@ -366,6 +385,9 @@ async def stream_chat_response(
     user_text: str,
     session_id: str | None = None,
 ) -> AsyncIterator[str]:
+    if session_id:
+        _interrupt_active_stream(session_id)
+
     stream_mgr = get_stream_manager()
     stream_session = stream_mgr.get_or_create(session_id or "_default")
     stream_session.start()

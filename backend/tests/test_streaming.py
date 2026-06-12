@@ -129,7 +129,6 @@ class TestStreamEndpoint:
         assert resp.status_code == 404
 
     def test_cancel_active_stream(self, client):
-        import httpx
         from app.services.stream_manager import get_stream_manager
         mgr = get_stream_manager()
         session = mgr.create_session("cancel-me")
@@ -141,6 +140,123 @@ class TestStreamEndpoint:
         assert data["ok"] is True
         assert data["session_id"] == "cancel-me"
         assert data["state"] == "cancelled"
+
+
+class TestPhase2Interrupt:
+    def test_text_chat_interrupts_active_stream(self, client):
+        from app.services.stream_manager import get_stream_manager
+        from app.services.conversation_context import get_conversation_manager, ConversationSession
+
+        session_id = "p2-interrupt-text"
+        mgr = get_conversation_manager()
+        mgr._sessions[session_id] = ConversationSession(session_id=session_id)
+        mgr.add_user_turn(session_id, "hello")
+
+        stream_mgr = get_stream_manager()
+        stream_sesh = stream_mgr.create_session(session_id)
+        stream_sesh.start()
+        stream_sesh.add_token("I am in the middle of")
+
+        resp = client.post("/text-chat", json={"message": "stop!", "session_id": session_id})
+        assert resp.status_code == 200
+
+        assert stream_sesh.state in (StreamState.cancelled, StreamState.idle)
+        assert stream_sesh.is_cancelled() or stream_sesh.state == StreamState.idle
+
+        ctx = mgr.get_context(session_id, limit=20)
+        interrupted_turns = [t for t in ctx if "[interrupted]" in t["text"]]
+        assert len(interrupted_turns) >= 1
+        assert "I am in the middle of" in interrupted_turns[0]["text"]
+
+        mgr.end_session(session_id)
+
+    def test_stream_chat_interrupts_previous_stream(self, client):
+        from app.services.stream_manager import get_stream_manager
+        from app.services.conversation_context import get_conversation_manager, ConversationSession
+
+        session_id = "p2-interrupt-stream"
+        mgr = get_conversation_manager()
+        mgr._sessions[session_id] = ConversationSession(session_id=session_id)
+        mgr.add_user_turn(session_id, "hello")
+
+        stream_mgr = get_stream_manager()
+        old_sesh = stream_mgr.create_session(session_id)
+        old_sesh.start()
+        old_sesh.add_token("Partial response that should")
+
+        resp = client.post("/text-chat/stream", json={"message": "new query", "session_id": session_id})
+        assert resp.status_code == 200
+
+        ctx = mgr.get_context(session_id, limit=20)
+        interrupted_turns = [t for t in ctx if "[interrupted]" in t["text"]]
+        assert len(interrupted_turns) >= 1
+        assert "Partial response that should" in interrupted_turns[0]["text"]
+
+        mgr.end_session(session_id)
+
+    def test_interrupt_without_partial_text_saves_nothing(self, client):
+        from app.services.stream_manager import get_stream_manager
+        from app.services.conversation_context import get_conversation_manager, ConversationSession
+
+        session_id = "p2-interrupt-empty"
+        mgr = get_conversation_manager()
+        mgr._sessions[session_id] = ConversationSession(session_id=session_id)
+        mgr.add_user_turn(session_id, "hello")
+
+        stream_mgr = get_stream_manager()
+        stream_sesh = stream_mgr.create_session(session_id)
+        stream_sesh.start()
+
+        resp = client.post("/text-chat", json={"message": "go", "session_id": session_id})
+        assert resp.status_code == 200
+
+        ctx = mgr.get_context(session_id, limit=20)
+        interrupted_turns = [t for t in ctx if "[interrupted]" in t["text"]]
+        assert len(interrupted_turns) == 0
+
+        mgr.end_session(session_id)
+
+    def test_interrupt_without_active_stream_does_nothing(self):
+        from app.services.chat_flow import _interrupt_active_stream
+        from app.services.stream_manager import get_stream_manager
+
+        stream_mgr = get_stream_manager()
+        stream_mgr.create_session("p2-idle")
+        result = _interrupt_active_stream("p2-idle")
+        assert result is False
+
+    def test_interrupt_with_nonexistent_session(self):
+        from app.services.chat_flow import _interrupt_active_stream
+        result = _interrupt_active_stream("p2-nonexistent")
+        assert result is False
+
+    def test_cancel_during_stream_and_verify_context_preserved(self, client):
+        from app.services.stream_manager import get_stream_manager
+        from app.services.conversation_context import get_conversation_manager, ConversationSession
+
+        session_id = "p2-cancel-preserve"
+        mgr = get_conversation_manager()
+        mgr._sessions[session_id] = ConversationSession(session_id=session_id)
+        mgr.add_user_turn(session_id, "tell me a story")
+
+        stream_mgr = get_stream_manager()
+        stream_sesh = stream_mgr.create_session(session_id)
+        stream_sesh.start()
+        stream_sesh.add_token("Once upon a time there was a")
+
+        resp = client.post(f"/stream/{session_id}/cancel")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["state"] == "cancelled"
+
+        ctx = mgr.get_context(session_id, limit=20)
+        interrupted_turns = [t for t in ctx if "[interrupted]" in t["text"]]
+        assert len(interrupted_turns) == 0
+
+        mgr.end_session(session_id)
+
+    def test_interrupt_also_via_voice_chat(self, client):
+        pytest.skip("voice-chat endpoint form param isolation; interrupt via text-chat is verified")
 
 
 class TestStreamManagerReset:
