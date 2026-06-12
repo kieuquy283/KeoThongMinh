@@ -174,7 +174,11 @@ async def generate_chat_response(
 
     reminder_draft = parse_reminder_text(resolved_text)
     if reminder_draft is not None:
-        reminder = get_reminder_store().create(reminder_draft.title, reminder_draft.remind_at)
+        reminder = get_reminder_store().create(
+            reminder_draft.title,
+            reminder_draft.remind_at,
+            repeat_interval=reminder_draft.repeat_interval,
+        )
         bot_text = _build_reminder_confirmation(reminder)
         if session_id:
             mgr.add_bot_turn(session_id, bot_text)
@@ -346,10 +350,20 @@ def _build_reminder_confirmation(reminder: Reminder) -> str:
     same_day = reminder.remind_at.date() == now.date()
     if same_day:
         when_text = reminder.remind_at.strftime("%H:%M")
-        return f"Duoc roi, minh se nhac ban {reminder.title} luc {when_text}."
+        msg = f"Duoc roi, minh se nhac ban {reminder.title} luc {when_text}."
+    else:
+        when_text = reminder.remind_at.strftime("%H:%M ngay %d/%m")
+        msg = f"Duoc roi, minh se nhac ban {reminder.title} luc {when_text}."
 
-    when_text = reminder.remind_at.strftime("%H:%M ngay %d/%m")
-    return f"Duoc roi, minh se nhac ban {reminder.title} luc {when_text}."
+    if reminder.repeat_interval:
+        if reminder.repeat_interval < 3600:
+            interval_text = f"mỗi {reminder.repeat_interval // 60} phút"
+        elif reminder.repeat_interval < 86400:
+            interval_text = f"mỗi {reminder.repeat_interval // 3600} tiếng"
+        else:
+            interval_text = "mỗi ngày"
+        msg += f" Minh se nhac lai {interval_text}."
+    return msg
 
 
 def _build_memory_confirmation(memory_item: dict[str, Any]) -> str:

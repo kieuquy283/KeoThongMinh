@@ -41,6 +41,7 @@ from app.schemas import (
     ReminderCreateRequest,
     ReminderDeleteResponse,
     ReminderResponse,
+    ReminderUpdateRequest,
     ResetPersonalDataResponse,
     TextChatRequest,
     TextChatResponse,
@@ -62,6 +63,7 @@ from app.services.memory_store import get_memory_store
 from app.services.tool_router import detect_tool_intent
 from app.services.reminder_store import get_reminder_store
 from app.services.voice_chat import run_voice_chat
+from app.services.reminder_checker import run_reminder_checker_loop
 from app.services.voice_session_manager import cancel_session, cleanup_session, create_session, get_active_session_ids, is_cancelled
 from app.tools.currency_tool import get_currency_info
 from app.tools.search_tool import get_search_info
@@ -73,9 +75,11 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(_periodic_session_cleanup())
+    cleanup_task = asyncio.create_task(_periodic_session_cleanup())
+    reminder_task = asyncio.create_task(run_reminder_checker_loop())
     yield
-    task.cancel()
+    cleanup_task.cancel()
+    reminder_task.cancel()
 
 
 async def _periodic_session_cleanup() -> None:
@@ -149,6 +153,20 @@ async def list_reminders() -> list[ReminderResponse]:
 async def list_due_reminders() -> list[ReminderResponse]:
     reminders = get_reminder_store().get_due()
     return [ReminderResponse.model_validate(reminder) for reminder in reminders]
+
+
+@app.put("/reminders/{reminder_id}", response_model=ReminderResponse)
+async def update_reminder(reminder_id: int, payload: ReminderUpdateRequest) -> ReminderResponse:
+    data = payload.model_dump(exclude_unset=True)
+    result = get_reminder_store().update(
+        reminder_id,
+        title=data.get("title"),
+        remind_at=data.get("remind_at"),
+        repeat_interval=data.get("repeat_interval", ReminderStore._UNSET),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Reminder not found.")
+    return ReminderResponse.model_validate(result)
 
 
 @app.delete("/reminders/{reminder_id}", response_model=ReminderDeleteResponse)
@@ -573,6 +591,39 @@ async def voice_chat(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.websocket("/ws/reminders")
+async def reminder_ws(websocket: WebSocket) -> None:
+    await websocket.accept()
+    bus = get_event_bus()
+    queue: asyncio.Queue[Event] = asyncio.Queue()
+
+    def on_reminder_due(event: Event) -> None:
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+
+    unsubscribe = bus.subscribe(EventType.reminder_due, on_reminder_due)
+
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30)
+                await websocket.send_json({
+                    "event": "reminder_due",
+                    "id": event.payload.get("id"),
+                    "title": event.payload.get("title"),
+                    "remind_at": event.payload.get("remind_at"),
+                    "repeat_interval": event.payload.get("repeat_interval"),
+                })
+            except asyncio.TimeoutError:
+                await websocket.send_json({"event": "ping"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        unsubscribe()
 
 
 @app.websocket("/ws/voice-turn")

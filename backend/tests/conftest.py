@@ -6,6 +6,8 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
+pytest_plugins = ("pytest_asyncio",)
+
 
 @pytest.fixture
 def app_module(monkeypatch, tmp_path):

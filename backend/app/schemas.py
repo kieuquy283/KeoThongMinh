@@ -56,6 +56,13 @@ class KeoBotLLMResponse(BaseModel):
 class ReminderCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     remind_at: datetime
+    repeat_interval: int | None = Field(default=None, ge=1, description="Seconds between repeats, null = one-shot")
+
+
+class ReminderUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    remind_at: datetime | None = None
+    repeat_interval: int | None = Field(default=None, ge=1)
 
 
 class ReminderResponse(BaseModel):
@@ -67,6 +74,7 @@ class ReminderResponse(BaseModel):
     status: ReminderStatus
     created_at: datetime
     triggered_at: datetime | None
+    repeat_interval: int | None = None
 
 
 class ReminderDeleteResponse(BaseModel):

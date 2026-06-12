@@ -19,6 +19,7 @@ class EventType(str, Enum):
     interrupt = "interrupt"
     cancel = "cancel"
     replanning = "replanning"
+    reminder_due = "reminder_due"
 
 
 @dataclass
