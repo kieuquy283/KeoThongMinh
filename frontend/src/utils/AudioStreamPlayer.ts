@@ -32,7 +32,7 @@ export class AudioStreamPlayer {
       float32.length,
       this.audioCtx.sampleRate
     );
-    audioBuffer.copyToChannel(float32, 0);
+    audioBuffer.getChannelData(0).set(float32);
 
     const source = this.audioCtx.createBufferSource();
     source.buffer = audioBuffer;
