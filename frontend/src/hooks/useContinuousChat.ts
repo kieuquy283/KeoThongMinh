@@ -12,6 +12,15 @@ export interface ContinuousChatState {
   userText: string;
   emotion: Emotion;
   error: string | null;
+  isConnected: boolean;
+}
+
+export interface ContinuousChatCallbacks {
+  onUserText?: (text: string) => void;
+  onBotText?: (text: string) => void;
+  onError?: (error: string | null) => void;
+  onStatusChange?: (status: "idle" | "listening" | "processing" | "speaking" | "error") => void;
+  onAction?: (action: { type: string; payload: Record<string, unknown> }) => void;
 }
 
 /**
@@ -19,7 +28,8 @@ export interface ContinuousChatState {
  * auto-send, auto-play, and auto-return to listening.
  * Zero button presses required for the core flow.
  */
-export function useContinuousChat(): ContinuousChatState {
+export function useContinuousChat(callbacks: ContinuousChatCallbacks = {}): ContinuousChatState {
+  const { onUserText, onBotText, onError, onStatusChange, onAction } = callbacks;
   const wsRef = useRef<WebSocket | null>(null);
   const playerRef = useRef<AudioStreamPlayer | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -38,6 +48,16 @@ export function useContinuousChat(): ContinuousChatState {
   const [userText, setUserText] = useState("");
   const [emotion] = useState<Emotion>("neutral");
   const [error, setError] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+
+  // Notify status changes
+  useEffect(() => {
+    if (isListening) onStatusChange?.("listening");
+    else if (isProcessing) onStatusChange?.("processing");
+    else if (isPlaying) onStatusChange?.("speaking");
+    else if (error) onStatusChange?.("error");
+    else onStatusChange?.("idle");
+  }, [isListening, isProcessing, isPlaying, error, onStatusChange]);
 
   // Initialize AudioStreamPlayer
   useEffect(() => {
@@ -73,6 +93,7 @@ export function useContinuousChat(): ContinuousChatState {
 
     ws.onopen = () => {
       setError(null);
+      setIsConnected(true);
       // Auto-start listening once connected
       startListening();
     };
@@ -84,6 +105,28 @@ export function useContinuousChat(): ContinuousChatState {
           data?: string;
         };
         switch (frame.event) {
+          case "user_text": {
+            if (frame.data) {
+              userTextRef.current = frame.data;
+              setUserText(frame.data);
+              onUserText?.(frame.data);
+            }
+            break;
+          }
+          case "action": {
+            if (frame.data) {
+              try {
+                const actionData = JSON.parse(frame.data) as {
+                  action: string;
+                  [key: string]: unknown;
+                };
+                onAction?.({ type: actionData.action, payload: actionData });
+              } catch {
+                // ignore parse error
+              }
+            }
+            break;
+          }
           case "audio_response": {
             if (playerRef.current && frame.data) {
               playerRef.current.playChunk(frame.data);
@@ -94,6 +137,7 @@ export function useContinuousChat(): ContinuousChatState {
             if (frame.data) {
               textBufferRef.current += frame.data;
               setBotText(textBufferRef.current);
+              onBotText?.(textBufferRef.current);
             }
             break;
           }
@@ -112,10 +156,14 @@ export function useContinuousChat(): ContinuousChatState {
           case "clear": {
             textBufferRef.current = "";
             setBotText("");
+            setUserText("");
+            userTextRef.current = "";
             break;
           }
           case "error": {
-            setError(frame.data || "Streaming error");
+            const errMsg = frame.data || "Streaming error";
+            setError(errMsg);
+            onError?.(errMsg);
             isTurnPendingRef.current = false;
             setIsProcessing(false);
             startListening();
@@ -141,6 +189,7 @@ export function useContinuousChat(): ContinuousChatState {
     ws.onclose = () => {
       setIsListening(false);
       setIsProcessing(false);
+      setIsConnected(false);
       if (playerRef.current) {
         playerRef.current.clear();
       }
@@ -323,6 +372,7 @@ export function useContinuousChat(): ContinuousChatState {
     userText,
     emotion,
     error,
+    isConnected,
   };
 
   return state;

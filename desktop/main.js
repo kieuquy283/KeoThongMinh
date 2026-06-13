@@ -1057,6 +1057,13 @@ app.whenReady().then(() => {
           } else {
             return { ok: false, error: "Thiếu tên ứng dụng." };
           }
+        } else if (command === "open_browser") {
+          const url = options.browserUrl || "https://www.google.com";
+          // Use default browser to open URL
+          const { shell } = require("electron");
+          shell.openExternal(url).catch((err) => {
+            if (mainLogger) mainLogger.error(`open_browser failed: ${err.message}`);
+          });
         } else {
           return { ok: false, error: `Lệnh không hỗ trợ: ${command}` };
         }

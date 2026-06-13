@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.services.entity_extractor import extract_entities
+from app.services.entity_extractor import extract_entities, BROWSER_HINTS, WEBSITE_ALIASES
 
 ToolIntent = Literal["weather", "time", "currency", "news_search", "general_search", "system", "none"]
 
@@ -23,7 +23,8 @@ TIME_HINTS = ("may gio", "gio o", "bay gio", "time in")
 CURRENCY_HINTS = ("ty gia", "usd", "vnd", "eur", "jpy", "doi tien", "gia tien")
 NEWS_HINTS = ("tin moi", "tin tuc", "tin ai", "news")
 SEARCH_HINTS = ("tim thong tin moi", "tim thong tin", "cap nhat", "tra cuu", "search")
-SYSTEM_HINTS = ("tat may", "shutdown", "khoi dong lai", "restart", "ngu", "sleep", "mo app", "mo ung dung", "dong app", "dong ung dung")
+SYSTEM_HINTS = ("tat may", "shutdown", "khoi dong lai", "restart", "ngu", "sleep", "mo app", "mo ung dung", "dong app", "dong ung dung", "truy cap")
+SYSTEM_CANCEL_HINTS = ("huy tat may", "huy shutdown", "huy khoi dong lai", "huy restart", "cancel shutdown", "cancel restart", "huy")
 
 TOOL_CONFIDENCE_THRESHOLD = 0.65
 
@@ -105,6 +106,19 @@ def _score_search(normalized: str, entities: dict[str, Any]) -> tuple[ToolIntent
 
 
 def _score_system(normalized: str, entities: dict[str, Any]) -> tuple[ToolIntent, float]:
+    # Check for cancel commands first
+    if entities.get("cancel_command"):
+        return "system", 0.95
+    if any(hint in normalized for hint in SYSTEM_CANCEL_HINTS):
+        return "system", 0.85
+    # Browser hints with URL — specific open browser commands
+    if any(hint in normalized for hint in BROWSER_HINTS):
+        if entities.get("browser_url"):
+            return "system", 0.95
+        return "system", 0.75
+    # Detect "mo {website}" pattern: e.g. "mo youtube", "mo zalo"
+    if entities.get("browser_url") and normalized.startswith("mo "):
+        return "system", 0.90
     if not any(hint in normalized for hint in SYSTEM_HINTS):
         return "none", 0.0
     if entities.get("system_command"):

@@ -77,7 +77,7 @@ declare global {
       }>;
 
       // System commands
-      executeSystemCommand: (command: string, options?: { delaySeconds?: number; appName?: string }) => Promise<{ ok: boolean; scheduled?: boolean; delaySeconds?: number; error?: string }>;
+      executeSystemCommand: (command: string, options?: { delaySeconds?: number; appName?: string; browserUrl?: string }) => Promise<{ ok: boolean; scheduled?: boolean; delaySeconds?: number; error?: string }>;
       cancelSystemCommand: () => Promise<{ ok: boolean; canceled?: boolean; error?: string }>;
 
       // Update events

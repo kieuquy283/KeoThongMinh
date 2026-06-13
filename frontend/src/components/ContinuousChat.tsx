@@ -1,8 +1,12 @@
-import { useContinuousChat } from "../hooks/useContinuousChat";
+import { useContinuousChat, ContinuousChatCallbacks } from "../hooks/useContinuousChat";
 import { KeoBotAnimatedMascot } from "./KeoBotAnimatedMascot";
 
-export function ContinuousChat() {
-  const state = useContinuousChat();
+interface ContinuousChatProps extends ContinuousChatCallbacks {
+  className?: string;
+}
+
+export function ContinuousChat({ className, onUserText, onBotText, onError, onStatusChange, onAction }: ContinuousChatProps) {
+  const state = useContinuousChat({ onUserText, onBotText, onError, onStatusChange, onAction });
 
   const status = state.isListening
     ? "listening"
@@ -11,11 +15,11 @@ export function ContinuousChat() {
     : "idle";
 
   return (
-    <div className="continuous-chat" style={{ padding: "1rem", textAlign: "center" }}>
+    <div className={`continuous-chat ${className ?? ""}`} style={{ padding: "1rem", textAlign: "center" }}>
       <div className="mascot-area" style={{ marginBottom: "1rem" }}>
         <KeoBotAnimatedMascot
           status={status}
-          emotion={state.emotion}
+          emotion={state.error ? "confused" : "calm"}
           isVisible={true}
         />
       </div>
@@ -35,22 +39,27 @@ export function ContinuousChat() {
       </div>
 
       <div className="status-indicator" style={{ fontSize: "0.9rem", color: "#888" }}>
-        {state.isListening && (
+        {!state.isConnected && (
+          <span style={{ color: "#ff9800" }}>
+            🔌 Đang kết nối...
+          </span>
+        )}
+        {state.isConnected && state.isListening && (
           <span style={{ color: "#4caf50" }}>
             🎤 Đang lắng nghe bạn...
           </span>
         )}
-        {state.isProcessing && (
+        {state.isConnected && state.isProcessing && (
           <span style={{ color: "#ff9800" }}>
             ⚙️ Đang xử lý...
           </span>
         )}
-        {state.isPlaying && (
+        {state.isConnected && state.isPlaying && (
           <span style={{ color: "#2196f3" }}>
             🔊 Đang trả lời...
           </span>
         )}
-        {!state.isListening && !state.isProcessing && !state.isPlaying && (
+        {state.isConnected && !state.isListening && !state.isProcessing && !state.isPlaying && (
           <span style={{ color: "#888" }}>
             👋 Sẵn sàng lắng nghe
           </span>

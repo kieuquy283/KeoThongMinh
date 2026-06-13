@@ -132,7 +132,62 @@ SYSTEM_COMMAND_ALIASES: dict[str, str] = {
     "dong app": "close_app",
     "dong ung dung": "close_app",
     "close app": "close_app",
+    "mo trinh duyet": "open_browser",
+    "mo trinh duyêt": "open_browser",
+    "mo chrome": "open_browser",
+    "mo edge": "open_browser",
+    "mo firefox": "open_browser",
+    "mo coccoc": "open_browser",
+    "mo coc coc": "open_browser",
+    "mo browser": "open_browser",
+    "mo web": "open_browser",
+    "mo trang web": "open_browser",
+    "mo link": "open_browser",
 }
+
+# Website/browser hints for intent detection
+# Only include specific browser open commands — avoid ambiguous phrases like "truy cap" (search) or "vao mang" (go online)
+BROWSER_HINTS = (
+    "mo trinh duyet", "mo trinh duyêt", "mo chrome", "mo edge",
+    "mo firefox", "mo coccoc", "mo coc coc", "mo browser",
+    "mo web", "mo trang web", "mo link",
+)
+
+# URL pattern — matches http(s)://, www., and common Vietnamese "open X" phrases
+URL_PATTERN = re.compile(
+    r"(?:https?://)?(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?:/[^\s]*)?)"
+)
+
+# Website shortcut aliases — maps Vietnamese phrases to full URLs
+WEBSITE_ALIASES: dict[str, str] = {
+    "google": "https://www.google.com",
+    "youtube": "https://www.youtube.com",
+    "facebook": "https://www.facebook.com",
+    "fb": "https://www.facebook.com",
+    "zalo": "https://chat.zalo.me",
+    "tiktok": "https://www.tiktok.com",
+    "shopee": "https://shopee.vn",
+    "ladida": "https://lazada.vn",
+    "tiki": "https://tiki.vn",
+    "github": "https://github.com",
+    "gmail": "https://mail.google.com",
+    "mail": "https://mail.google.com",
+    "vietnamnet": "https://vietnamnet.vn",
+    "vnexpress": "https://vnexpress.net",
+    "dan tri": "https://dantri.com.vn",
+    "baomoi": "https://baomoi.com",
+    "chatgpt": "https://chat.openai.com",
+}
+
+# Cancel system command patterns
+SYSTEM_COMMAND_CANCEL_PATTERNS: list[tuple[str, str]] = [
+    ("huy tat may", "shutdown"),
+    ("huy shutdown", "shutdown"),
+    ("huy khoi dong lai", "restart"),
+    ("huy restart", "restart"),
+    ("cancel shutdown", "shutdown"),
+    ("cancel restart", "restart"),
+]
 
 
 def extract_entities(user_text: str) -> dict[str, str | float | None]:
@@ -148,7 +203,15 @@ def extract_entities(user_text: str) -> dict[str, str | float | None]:
         "system_command": None,
         "delay_seconds": None,
         "app_name": None,
+        "browser_url": None,
+        "cancel_command": None,
     }
+
+    # Check for cancel commands FIRST
+    cancel_cmd = _detect_cancel_command(normalized)
+    if cancel_cmd:
+        entities["cancel_command"] = cancel_cmd
+        return entities
 
     entities["location"] = _extract_location(normalized)
     entities["timezone"] = _extract_timezone(normalized)
@@ -162,7 +225,40 @@ def extract_entities(user_text: str) -> dict[str, str | float | None]:
     entities["system_command"] = system_cmd
     entities["delay_seconds"] = delay
     entities["app_name"] = app_name
+    entities["browser_url"] = _extract_browser_url(normalized, user_text)
     return entities
+
+
+def _detect_cancel_command(normalized: str) -> str | None:
+    """Detect cancel system command phrases like 'hủy tắt máy'."""
+    for pattern, cmd in SYSTEM_COMMAND_CANCEL_PATTERNS:
+        if pattern in normalized:
+            return cmd
+    return None
+
+
+def _extract_browser_url(normalized: str, original_text: str) -> str | None:
+    """Extract URL from browser open requests.
+
+    Supports:
+    - Explicit URLs (google.com, https://...)
+    - Website aliases (google, youtube, facebook, zalo, etc.)
+    - Domain patterns in Vietnamese text
+    """
+    # 1. Check for website aliases first (e.g., "mở google", "truy cập youtube")
+    for alias, url in WEBSITE_ALIASES.items():
+        if alias in normalized:
+            return url
+
+    # 2. Try to extract a URL-like pattern from original text
+    url_match = URL_PATTERN.search(original_text)
+    if url_match:
+        domain = url_match.group(1)
+        # Only accept if it looks like a real domain (has a dot)
+        if "." in domain and len(domain) > 3:
+            return f"https://{domain}"
+
+    return None
 
 
 def _extract_location(normalized: str) -> str | None:

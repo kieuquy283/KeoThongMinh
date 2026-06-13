@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config import get_settings
 from app.providers.streaming_pipeline import StreamingPipeline
+from app.services.conversation_context import get_conversation_manager
 
 logger = logging.getLogger("keobot.websocket_stream")
 router = APIRouter()
@@ -20,12 +22,21 @@ async def stream_chat(websocket: WebSocket) -> None:
 
     Ingests audio chunks from the frontend, runs STT -> LLM streaming -> TTS
     sentence-by-sentence, and streams audio/text back to the client.
+
+    A persistent conversation session is created for the lifetime of the
+    WebSocket connection so multi-turn context is preserved.
     """
     await websocket.accept()
     settings = get_settings()
-    pipeline = StreamingPipeline()
+
+    # Create a persistent conversation session for this connection
+    session_id = uuid.uuid4().hex[:12]
+    mgr = get_conversation_manager()
+    mgr.create_session()
+    logger.info("stream_chat session_id=%s", session_id)
+
+    pipeline = StreamingPipeline(session_id=session_id)
     receive_task: asyncio.Task[Any] | None = None
-    send_task: asyncio.Task[Any] | None = None
     is_open = True
 
     try:
@@ -87,6 +98,10 @@ async def stream_chat(websocket: WebSocket) -> None:
                         payload = {"event": "audio_response", "data": token.get("data", "")}
                     elif token_type == "text":
                         payload = {"event": "text_response", "data": token.get("data", "")}
+                    elif token_type == "user_text":
+                        payload = {"event": "user_text", "data": token.get("data", "")}
+                    elif token_type == "action":
+                        payload = {"event": "action", "data": token.get("data", "")}
                     elif token_type == "done":
                         payload = {"event": "response_done"}
                     elif token_type == "error":
@@ -133,6 +148,9 @@ async def stream_chat(websocket: WebSocket) -> None:
                 await receive_task
             except asyncio.CancelledError:
                 pass
+        # End the conversation session
+        mgr.end_session(session_id)
+        logger.info("stream_chat session_id=%s ended", session_id)
         try:
             await websocket.close()
         except Exception:

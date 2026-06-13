@@ -9,20 +9,19 @@ import { ReminderPanel } from "./components/ReminderPanel";
 import { ReminderToast } from "./components/ReminderToast";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ContinuousChat } from "./components/ContinuousChat";
-import { VoiceRecorder, type VoiceRecorderHandle } from "./components/VoiceRecorder";
 import { useWakeWord } from "./hooks/useWakeWord";
 import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
 import { mapAppStateToMascot } from "./utils/keobotMascotState";
-import { voiceStatusToSessionState, getSessionLabel, isIdle, canInterrupt } from "./utils/voiceSessionState";
+import { voiceStatusToSessionState, getSessionLabel } from "./utils/voiceSessionState";
 import { play as audioPlay, stop as audioStop, isPlaying as audioIsPlaying, subscribe as audioSubscribe } from "./utils/audioPlaybackController";
 import { logDiagnostic } from "./utils/diagnostics";
 import type {
   AutoConversationStatus,
   ConversationMode,
   ConversationState,
+  Emotion,
   KeoBotReminder,
   KeoBotSettings,
-  VoiceChatResponse,
   VoiceSessionState,
   VoiceStatus,
   WakeWordStatus,
@@ -72,8 +71,8 @@ export default function App() {
   const [conversation, setConversation] = useState<ConversationState>(INITIAL_CONVERSATION);
   const [error, setError] = useState<string | null>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
-  const [conversationMode, setConversationMode] = useState<ConversationMode>("manual");
-  const [autoStatus, setAutoStatus] = useState<AutoConversationStatus>("off");
+  const [conversationMode, setConversationMode] = useState<ConversationMode>("auto");
+  const [autoStatus, setAutoStatus] = useState<AutoConversationStatus>("listening");
   const [showSettings, setShowSettings] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const [showKnowledge, setShowKnowledge] = useState(false);
@@ -85,11 +84,120 @@ export default function App() {
   const [remindersLoading, setRemindersLoading] = useState(false);
   const [remindersError, setRemindersError] = useState<string | null>(null);
   const [dueReminder, setDueReminder] = useState<KeoBotReminder | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const voiceRecorderRef = useRef<VoiceRecorderHandle | null>(null);
+  const [continuousEmotion, setContinuousEmotion] = useState<Emotion>("neutral");
   const wakeWordCommandPendingRef = useRef(false);
   const isRequestInFlightRef = useRef(false);
   const isDesktopMode = getDesktopMode();
+
+  // ContinuousChat callbacks: sync streaming voice chat with App state
+  const handleContinuousUserText = useCallback((text: string) => {
+    setConversation((prev) => ({
+      ...prev,
+      userText: text,
+      botText: "",
+      audioUrl: "",
+      emotion: "neutral" as Emotion,
+      action: null,
+      toolUsed: "none" as const,
+      toolResult: null,
+      sources: [],
+      updatedAt: null,
+    }));
+    setError(null);
+    setStatus("thinking");
+    setSessionState("thinking");
+  }, []);
+
+  const handleContinuousBotText = useCallback((text: string) => {
+    setConversation((prev) => ({
+      ...prev,
+      botText: text,
+      emotion: continuousEmotion || "happy",
+    }));
+    setStatus("speaking");
+    setSessionState("speaking");
+  }, [continuousEmotion]);
+
+  const handleContinuousError = useCallback((errorMsg: string | null) => {
+    setError(errorMsg);
+    if (errorMsg) {
+      setStatus("error");
+      setSessionState("error");
+    }
+  }, []);
+
+  const handleContinuousStatus = useCallback((status: "idle" | "listening" | "processing" | "speaking" | "error") => {
+    switch (status) {
+      case "listening":
+        setStatus("recording");
+        setSessionState("command_listening");
+        setAutoStatus("listening");
+        break;
+      case "processing":
+        setStatus("thinking");
+        setSessionState("thinking");
+        setAutoStatus("thinking");
+        break;
+      case "speaking":
+        setStatus("speaking");
+        setSessionState("speaking");
+        setAutoStatus("speaking");
+        break;
+      case "error":
+        setStatus("error");
+        setSessionState("error");
+        setAutoStatus("error");
+        break;
+      case "idle":
+      default:
+        setStatus("idle");
+        setSessionState("idle");
+        setAutoStatus("listening");
+        break;
+    }
+  }, []);
+
+  // Handle actions from the streaming pipeline (system commands, reminders)
+  const handleContinuousAction = useCallback((action: { type: string; payload: Record<string, unknown> }) => {
+    if (action.type === "system_command" && isDesktopMode && window.keobotDesktop?.executeSystemCommand) {
+      const payload = action.payload;
+      const systemCommand = payload.system_command as string | undefined;
+      const delaySeconds = (payload.delay_seconds as number) || 0;
+      const appName = (payload.app_name as string) || "";
+      const browserUrl = (payload.browser_url as string) || "";
+      if (systemCommand) {
+        logDiagnostic("system_command", `Streaming pipeline system command: ${systemCommand}`, { delaySeconds, appName, browserUrl });
+        void window.keobotDesktop.executeSystemCommand(systemCommand, {
+          delaySeconds,
+          appName,
+          browserUrl,
+        }).then((result: { ok: boolean; scheduled?: boolean; error?: string }) => {
+          if (result.ok) {
+            logDiagnostic("system_command", `Scheduled ${systemCommand}`, { delaySeconds, scheduled: result.scheduled });
+          } else {
+            logDiagnostic("system_command", `Failed ${systemCommand}`, { error: result.error });
+            setError(`Lỗi lệnh hệ thống: ${result.error ?? "Không xác định"}`);
+          }
+        });
+      }
+    } else if (action.type === "reminder_created") {
+      const reminder = action.payload.reminder as { id?: number; title?: string; remind_at?: string } | undefined;
+      if (reminder) {
+        setReminders((current) => {
+          const next = current.filter((item) => item.id !== reminder.id);
+          return [...next, {
+            id: reminder.id ?? 0,
+            title: reminder.title ?? "",
+            remind_at: reminder.remind_at ?? "",
+            status: "pending" as const,
+            created_at: new Date().toISOString(),
+            triggered_at: null,
+          }].sort((left, right) => left.remind_at.localeCompare(right.remind_at));
+        });
+      }
+    }
+  }, [isDesktopMode]);
+
   const wakeWordEnabled = isDesktopMode && desktopSettings.BACKGROUND_ASSISTANT_ENABLED && desktopSettings.WAKE_WORD_ENABLED;
   const wakeWord = useWakeWord({
     enabled: wakeWordEnabled,
@@ -250,9 +358,13 @@ export default function App() {
       }
 
       if (isWakeWordTurn) {
-        voiceRecorderRef.current?.startWakeWordTurn();
+        // Wake word turn — start a new conversation turn via the continuous chat
+        // The continuous chat is always listening, so we just need to signal
+        setSessionState("command_listening");
+        setStatus("recording");
       } else {
-        voiceRecorderRef.current?.startHandsFree();
+        setSessionState("command_listening");
+        setStatus("recording");
       }
 
       wakeWordCommandPendingRef.current = false;
@@ -263,7 +375,7 @@ export default function App() {
       wakeWordCommandPendingRef.current = false;
       setHandsfreeMessage(null);
       stopResponseAudio();
-      voiceRecorderRef.current?.stopHandsFree();
+      // Continuous chat will resume listening automatically
       if (wakeWord.enabled && wakeWord.supported) {
         wakeWord.startWakeWord();
       }
@@ -445,61 +557,6 @@ export default function App() {
     void playResponseAudio(conversation.audioUrl);
   }, [conversation.audioUrl, conversationMode, sessionState]);
 
-  const handleVoiceResponse = (response: VoiceChatResponse) => {
-    setConversation({
-      userText: response.user_text,
-      botText: response.bot_text,
-      emotion: response.emotion,
-      action: response.action ?? null,
-      audioUrl: response.audio_url,
-      toolUsed: response.tool_used ?? "none",
-      toolResult: response.tool_result ?? null,
-      sources: response.sources ?? [],
-      updatedAt: response.updated_at ?? null,
-    });
-    setError(null);
-    setAudioBlocked(false);
-    setStatus("speaking");
-    setSessionState("speaking");
-    isRequestInFlightRef.current = false;
-
-    if (response.action === "reminder_created" && response.reminder) {
-      const createdReminder = response.reminder;
-      setReminders((current) => {
-        const next = current.filter((item) => item.id !== createdReminder.id);
-        return [...next, createdReminder].sort((left, right) => left.remind_at.localeCompare(right.remind_at));
-      });
-    }
-
-    if (response.action === "system_command" && response.tool_result && isDesktopMode) {
-      const toolResult = response.tool_result as Record<string, unknown>;
-      const systemCommand = toolResult.system_command as string | undefined;
-      const delaySeconds = (toolResult.delay_seconds as number) || 0;
-      const appName = (toolResult.app_name as string) || "";
-      if (systemCommand && window.keobotDesktop?.executeSystemCommand) {
-        void window.keobotDesktop.executeSystemCommand(systemCommand, {
-          delaySeconds,
-          appName,
-        }).then((result: { ok: boolean; scheduled?: boolean; error?: string }) => {
-          if (result.ok) {
-            logDiagnostic("system_command", `Scheduled ${systemCommand}`, { delaySeconds, scheduled: result.scheduled });
-          } else {
-            logDiagnostic("system_command", `Failed ${systemCommand}`, { error: result.error });
-          }
-        });
-      }
-    }
-  };
-
-  const handleRecorderError = (message: string | null) => {
-    setError(message);
-    if (message) {
-      setStatus("error");
-      setSessionState("error");
-      isRequestInFlightRef.current = false;
-    }
-  };
-
   const handleDeleteReminder = async (reminderId: number) => {
     await deleteReminder(reminderId);
     setReminders((current) => current.filter((item) => item.id !== reminderId));
@@ -520,7 +577,7 @@ export default function App() {
     hasError: Boolean(error),
     hasDueReminder: Boolean(dueReminder),
     latestAction: conversation.action,
-    emotion: conversation.emotion,
+    emotion: conversation.emotion || continuousEmotion,
   });
 
   return (
@@ -644,7 +701,13 @@ export default function App() {
 
       <section className="panel recorder-shell">
         <div className="panel-inner recorder-card">
-          <ContinuousChat />
+          <ContinuousChat
+            onUserText={handleContinuousUserText}
+            onBotText={handleContinuousBotText}
+            onError={handleContinuousError}
+            onStatusChange={handleContinuousStatus}
+            onAction={handleContinuousAction}
+          />
         </div>
       </section>
 

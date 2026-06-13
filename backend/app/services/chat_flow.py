@@ -248,10 +248,14 @@ async def generate_chat_response(
         bot_text = llm_response["bot_text"]
         if session_id:
             mgr.add_bot_turn(session_id, bot_text)
+
+        # System commands need a distinct action type for frontend IPC handling
+        action = "system_command" if tool_route.intent == "system" else "tool_response"
+
         return {
             "bot_text": bot_text,
             "emotion": llm_response["emotion"],
-            "action": "tool_response",
+            "action": action,
             "reminder": None,
             "tool_used": tool_route.intent,
             "tool_result": tool_result,
@@ -413,11 +417,16 @@ def _run_tool(intent: str, query: str, entities: dict[str, Any]) -> dict[str, An
     if intent in {"news_search", "general_search"}:
         return get_search_info(query, intent, entities=entities)
     if intent == "system":
+        cmd = entities.get("system_command")
+        # If browser_url is detected, override to open_browser
+        if entities.get("browser_url"):
+            cmd = "open_browser"
         return {
             "is_available": True,
-            "system_command": entities.get("system_command"),
+            "system_command": cmd,
             "delay_seconds": entities.get("delay_seconds") or 0,
             "app_name": entities.get("app_name"),
+            "browser_url": entities.get("browser_url", ""),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
     return {
