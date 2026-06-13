@@ -11,3 +11,4 @@ httpx
 numpy
 pytest
 pyinstaller
+websockets

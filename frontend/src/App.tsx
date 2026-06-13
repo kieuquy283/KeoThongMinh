@@ -8,6 +8,7 @@ import { PrivacyNotice } from "./components/PrivacyNotice";
 import { ReminderPanel } from "./components/ReminderPanel";
 import { ReminderToast } from "./components/ReminderToast";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { RealtimeVoiceChat } from "./components/RealtimeVoiceChat";
 import { VoiceRecorder, type VoiceRecorderHandle } from "./components/VoiceRecorder";
 import { useWakeWord } from "./hooks/useWakeWord";
 import { DEFAULT_SETTINGS, normalizeSettings } from "./settings";
@@ -78,6 +79,7 @@ export default function App() {
   const [showKnowledge, setShowKnowledge] = useState(false);
   const [showReminders, setShowReminders] = useState(false);
   const [handsfreeMessage, setHandsfreeMessage] = useState<string | null>(null);
+  const [realtimeMode, setRealtimeMode] = useState(false);
   const [desktopSettings, setDesktopSettings] = useState<KeoBotSettings>(DEFAULT_SETTINGS);
   const [privacyNotified, setPrivacyNotified] = useState(false);
   const [reminders, setReminders] = useState<KeoBotReminder[]>([]);
@@ -643,28 +645,43 @@ export default function App() {
 
       <section className="panel recorder-shell">
         <div className="panel-inner recorder-card">
-          <VoiceRecorder
-            ref={voiceRecorderRef}
-            status={status}
-            sessionState={sessionState}
-            onStatusChange={setStatus}
-            onResponse={handleVoiceResponse}
-            onError={handleRecorderError}
-            onStopSpeaking={() => stopResponseAudio("manual")}
-            onModeChange={setConversationMode}
-            onAutoStatusChange={setAutoStatus}
-          />
-          <div className="status-pill recorder-status" aria-live="polite">
-            <span className="status-dot" />
-            {SESSION_LABELS[sessionState]}
+          <div style={{ marginBottom: "0.5rem" }}>
+            <button
+              className="action-button secondary"
+              type="button"
+              onClick={() => setRealtimeMode((prev) => !prev)}
+            >
+              {realtimeMode ? "Chế độ thường" : "Chế độ realtime (v1.7)"}
+            </button>
           </div>
-          {sessionState === "speaking" ? (
-            <div className="audio-actions" style={{ marginTop: "0.5rem" }}>
-              <button className="action-button secondary" type="button" onClick={() => stopResponseAudio("manual")}>
-                Dừng nói
-              </button>
-            </div>
-          ) : null}
+          {realtimeMode ? (
+            <RealtimeVoiceChat />
+          ) : (
+            <>
+              <VoiceRecorder
+                ref={voiceRecorderRef}
+                status={status}
+                sessionState={sessionState}
+                onStatusChange={setStatus}
+                onResponse={handleVoiceResponse}
+                onError={handleRecorderError}
+                onStopSpeaking={() => stopResponseAudio("manual")}
+                onModeChange={setConversationMode}
+                onAutoStatusChange={setAutoStatus}
+              />
+              <div className="status-pill recorder-status" aria-live="polite">
+                <span className="status-dot" />
+                {SESSION_LABELS[sessionState]}
+              </div>
+              {sessionState === "speaking" ? (
+                <div className="audio-actions" style={{ marginTop: "0.5rem" }}>
+                  <button className="action-button secondary" type="button" onClick={() => stopResponseAudio("manual")}>
+                    Dừng nói
+                  </button>
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       </section>
 

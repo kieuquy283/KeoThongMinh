@@ -69,6 +69,7 @@ from app.tools.currency_tool import get_currency_info
 from app.tools.search_tool import get_search_info
 from app.tools.time_tool import get_time_info
 from app.tools.weather_tool import get_weather_info
+from app.api.websocket_stream import router as websocket_stream_router
 
 settings = get_settings()
 
@@ -124,6 +125,7 @@ app.add_middleware(
 ensure_data_dirs()
 static_dir = get_static_dir()
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+app.include_router(websocket_stream_router)
 
 
 @app.get("/health", response_model=HealthResponse)

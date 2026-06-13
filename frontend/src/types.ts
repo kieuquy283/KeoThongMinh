@@ -179,6 +179,20 @@ export type WakeWordStatus =
   | "unavailable"
   | "error";
 
+export type StreamEventType =
+  | "audio_chunk"
+  | "user_interrupt"
+  | "audio_response"
+  | "text_response"
+  | "response_done"
+  | "clear"
+  | "error";
+
+export interface StreamEvent {
+  event: StreamEventType;
+  data?: string;
+}
+
 export interface KnowledgeDocument {
   id: number;
   filename: string;
