@@ -249,9 +249,21 @@ This keeps the pipeline runnable without external API keys.
 
 ## API Mode
 
-If you want live providers, configure the keys and provider selection in `backend/.env`:
+**Default provider: Qwen/DashScope (Alibaba Cloud)**
 
-### OpenAI
+```env
+STT_PROVIDER=dashscope
+LLM_PROVIDER=qwen3.6-plus
+TTS_PROVIDER=edge_tts
+DASHSCOPE_API_KEY=sk-...
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_LLM_MODEL=qwen3.6-plus
+DASHSCOPE_STT_MODEL=Qwen3-ASR-Flash
+```
+
+### Alternative Providers
+
+**OpenAI:**
 ```env
 STT_PROVIDER=openai
 LLM_PROVIDER=openai
@@ -259,22 +271,11 @@ TTS_PROVIDER=edge_tts
 OPENAI_API_KEY=...
 ```
 
-### Gemini (Google)
+**Gemini (Google):**
 ```env
 LLM_PROVIDER=gemini
 GOOGLE_API_KEY=...
 GEMINI_MODEL=gemini-2.0-flash
-```
-
-### Qwen/DashScope (Alibaba Cloud)
-```env
-LLM_PROVIDER=qwen3.6-plus
-STT_PROVIDER=dashscope
-TTS_PROVIDER=edge_tts
-DASHSCOPE_API_KEY=sk-...
-DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-DASHSCOPE_LLM_MODEL=qwen3.6-plus
-DASHSCOPE_STT_MODEL=Qwen3-ASR-Flash
 ```
 
 - `GOOGLE_API_KEY` works as an alias for Gemini in the backend
@@ -330,25 +331,25 @@ BACKEND_HOST=127.0.0.1
 BACKEND_PORT=8000
 FRONTEND_ORIGIN=http://localhost:5173
 
-# Provider selection
-STT_PROVIDER=openai          # openai | dashscope | mock
-LLM_PROVIDER=openai          # openai | gemini | qwen3.6-plus | mock
+# Provider selection (default: Qwen/DashScope)
+STT_PROVIDER=dashscope       # dashscope | openai | mock
+LLM_PROVIDER=qwen3.6-plus    # qwen3.6-plus | openai | gemini | mock
 TTS_PROVIDER=edge_tts        # edge_tts | mock
 
-# OpenAI
-OPENAI_API_KEY=...
-OPENAI_STT_MODEL=gpt-4o-mini-transcribe
-OPENAI_CHAT_MODEL=gpt-4o-mini
-
-# Gemini (Google)
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.0-flash
-
-# Qwen/DashScope (Alibaba Cloud)
+# Qwen/DashScope (Alibaba Cloud) - Default
 DASHSCOPE_API_KEY=sk-...
 DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_LLM_MODEL=qwen3.6-plus
 DASHSCOPE_STT_MODEL=Qwen3-ASR-Flash
+
+# OpenAI (optional)
+OPENAI_API_KEY=...
+OPENAI_STT_MODEL=gpt-4o-mini-transcribe
+OPENAI_CHAT_MODEL=gpt-4o-mini
+
+# Gemini (Google) (optional)
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.0-flash
 
 # TTS
 EDGE_TTS_VOICE=vi-VN-HoaiMyNeural

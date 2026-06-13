@@ -1,8 +1,8 @@
 import type { KeoBotSettings } from "./types";
 
 export const DEFAULT_SETTINGS: KeoBotSettings = {
-  STT_PROVIDER: "mock",
-  LLM_PROVIDER: "local",
+  STT_PROVIDER: "dashscope",
+  LLM_PROVIDER: "qwen3.6-plus",
   TTS_PROVIDER: "edge_tts",
   WAKE_WORD_ENABLED: false,
   WAKE_WORD_PHRASES: ["kẹo thông minh ơi", "này kẹo thông minh", "hey kẹo thông minh"],

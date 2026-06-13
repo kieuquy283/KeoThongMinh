@@ -37,8 +37,8 @@ class Settings:
     frontend_origin: str = get_env("FRONTEND_ORIGIN", "http://localhost:5173") or "http://localhost:5173"
     data_dir: Path = get_data_root()
 
-    stt_provider: str = get_env("STT_PROVIDER", "openai") or "openai"
-    llm_provider: str = get_env("LLM_PROVIDER", "openai") or "openai"
+    stt_provider: str = get_env("STT_PROVIDER", "dashscope") or "dashscope"
+    llm_provider: str = get_env("LLM_PROVIDER", "qwen3.6-plus") or "qwen3.6-plus"
     tts_provider: str = get_env("TTS_PROVIDER", "edge_tts") or "edge_tts"
 
     openai_api_key: str | None = get_env("OPENAI_API_KEY")

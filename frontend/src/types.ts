@@ -141,8 +141,8 @@ export interface ConversationState {
 }
 
 export interface KeoBotSettings {
-  STT_PROVIDER: "mock" | "openai";
-  LLM_PROVIDER: "local" | "openai" | "gemini";
+  STT_PROVIDER: "mock" | "openai" | "dashscope";
+  LLM_PROVIDER: "local" | "openai" | "gemini" | "qwen3.6-plus" | "dashscope";
   TTS_PROVIDER: "edge_tts";
   WAKE_WORD_ENABLED: boolean;
   WAKE_WORD_PHRASES: string[];
