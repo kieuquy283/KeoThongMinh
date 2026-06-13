@@ -251,15 +251,35 @@ This keeps the pipeline runnable without external API keys.
 
 If you want live providers, configure the keys and provider selection in `backend/.env`:
 
+### OpenAI
 ```env
 STT_PROVIDER=openai
 LLM_PROVIDER=openai
 TTS_PROVIDER=edge_tts
 OPENAI_API_KEY=...
-GOOGLE_API_KEY=...
 ```
 
-Gemini is available as a fallback LLM option if configured. `GOOGLE_API_KEY` works as an alias for Gemini in the backend.
+### Gemini (Google)
+```env
+LLM_PROVIDER=gemini
+GOOGLE_API_KEY=...
+GEMINI_MODEL=gemini-2.0-flash
+```
+
+### Qwen/DashScope (Alibaba Cloud)
+```env
+LLM_PROVIDER=qwen3.6-plus
+STT_PROVIDER=dashscope
+TTS_PROVIDER=edge_tts
+DASHSCOPE_API_KEY=sk-...
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_LLM_MODEL=qwen3.6-plus
+DASHSCOPE_STT_MODEL=Qwen3-ASR-Flash
+```
+
+- `GOOGLE_API_KEY` works as an alias for Gemini in the backend
+- DashScope uses OpenAI-compatible API format (`compatible-mode/v1`)
+- All providers support the same feature set: chat, tools, streaming, summarization
 
 ## Information Tool Providers
 
@@ -309,19 +329,39 @@ APP_ENV=development
 BACKEND_HOST=127.0.0.1
 BACKEND_PORT=8000
 FRONTEND_ORIGIN=http://localhost:5173
-STT_PROVIDER=openai
-LLM_PROVIDER=openai
-TTS_PROVIDER=edge_tts
+
+# Provider selection
+STT_PROVIDER=openai          # openai | dashscope | mock
+LLM_PROVIDER=openai          # openai | gemini | qwen3.6-plus | mock
+TTS_PROVIDER=edge_tts        # edge_tts | mock
+
+# OpenAI
 OPENAI_API_KEY=...
 OPENAI_STT_MODEL=gpt-4o-mini-transcribe
 OPENAI_CHAT_MODEL=gpt-4o-mini
+
+# Gemini (Google)
 GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-2.0-flash
+
+# Qwen/DashScope (Alibaba Cloud)
+DASHSCOPE_API_KEY=sk-...
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_LLM_MODEL=qwen3.6-plus
+DASHSCOPE_STT_MODEL=Qwen3-ASR-Flash
+
+# TTS
 EDGE_TTS_VOICE=vi-VN-HoaiMyNeural
 EDGE_TTS_RATE=+0%
 EDGE_TTS_VOLUME=+0%
-MAX_UPLOAD_SIZE_MB=15
+
+# Mock mode
 MOCK_STT_TEXT=Kẹo Thông Minh oi, ban la ai?
+
+# Limits
+MAX_UPLOAD_SIZE_MB=15
+
+# Information tools
 CURRENCY_PROVIDER=none
 EXCHANGE_RATE_API_URL=
 EXCHANGE_RATE_API_KEY=
@@ -334,7 +374,7 @@ SERPAPI_API_KEY=
 
 ## Tests
 
-Backend tests:
+Backend tests (latest run: 417 passed, 3 skipped):
 
 ```bash
 cd backend
@@ -374,6 +414,7 @@ npm run smoke:packaged
 - Auto conversation depends on browser `MediaRecorder`, microphone permission, and Web Audio API support.
 - Silence threshold is heuristic and may need tuning for different microphones or noisy rooms.
 - Wake word relies on the Web Speech API being available in the Electron renderer.
+- Wake word may have a small delay (400ms) after TTS playback to avoid self-triggering.
 - Interrupt only stops local playback or aborts the current request before the backend replies; there is no backend streaming interrupt.
 - Weather and search need provider configuration before they can answer real-world queries.
 - Currency can fall back to demo values, so the response must be treated as non-live unless a provider is configured.
@@ -381,6 +422,8 @@ npm run smoke:packaged
 - Reminders only fire while the desktop app is open and polling the local backend.
 - Reminders do not sync to cloud services.
 - Generated audio files are stored under `backend/app/static/audio/` and should be treated as runtime artifacts.
+- System commands (shutdown/restart/sleep) require desktop app and show confirmation dialogs for safety.
+- System commands may not work on all Windows configurations (UAC, group policy).
 
 ## Release v0.3.0
 
@@ -499,6 +542,13 @@ npm run smoke:packaged
 4. Speak one short sentence.
 5. Stay silent for about 1 second.
 6. Confirm the app sends audio automatically, plays Kẹo Thông Minh's reply, and returns to listening.
+
+## System Commands Quick Test
+
+1. Say `Tắt máy sau 30 phút` — confirm dialog appears.
+2. Say `Hủy tắt máy` — confirm cancellation.
+3. Say `Mở Chrome` — confirm Chrome opens.
+4. Say `Đóng Chrome` — confirm Chrome closes.
 
 ## Real-world Tools Quick Test
 
@@ -647,6 +697,109 @@ A "Diagnostics & About" section is available in the Settings panel:
 | `frontend/src/components/SettingsPanel.tsx` | Added publish provider, update channel, backend version to diagnostics; dynamic update status message |
 | `backend/tests/test_distribution.py` | New — 5 test classes for publish config, metadata, updater state, artifacts, workflow |
 | `docs/RELEASE_CHECKLIST.md` | Updated with workflow steps, required secrets, SmartScreen warning, update metadata |
+
+## v1.6 — Qwen/DashScope Provider, System Commands, Mascot Improvements
+
+### Qwen/DashScope Provider Support
+
+Kẹo Thông Minh now supports Alibaba Cloud's DashScope API for both LLM and STT:
+
+| Provider | Model | Purpose |
+|----------|-------|---------|
+| Qwen | `qwen3.6-plus` | LLM chat completions |
+| Qwen | `Qwen3-ASR-Flash` | Speech-to-text (STT) |
+
+**Configuration:**
+```env
+LLM_PROVIDER=qwen3.6-plus
+STT_PROVIDER=dashscope
+DASHSCOPE_API_KEY=sk-...
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+SPEECH_MODEL=Qwen3-ASR-Flash
+```
+
+- DashScope uses OpenAI-compatible API format (`compatible-mode/v1`)
+- Backend uses the same `openai` SDK with custom `api_key` and `base_url`
+- All LLM functions work: chat response, tool response, streaming, summarization, replanning
+- Vietnamese responses with proper diacritics are preserved
+
+### System Commands
+
+Kẹo Thông Minh can now execute system commands via voice:
+
+| Command | Action | Examples |
+|---------|--------|----------|
+| Shutdown | Tắt máy | `Tắt máy`, `shutdown`, `Tắt máy sau 5 phút` |
+| Restart | Khởi động lại | `Restart máy`, `Khởi động lại` |
+| Sleep | Ngủ đông | `Ngủ đi`, `sleep`, `sleep 30 phút` |
+| Open App | Mở ứng dụng | `Mở Chrome`, `mở app Notepad` |
+| Close App | Đóng ứng dụng | `Đóng Chrome`, `đóng app Notepad` |
+
+- **Delay support**: `Tắt máy sau 10 phút`, `Sleep 2 tiếng`
+- **App name parsing**: Extracts from command context
+- **Confirmation dialog**: Destructive commands (shutdown/restart) show native confirmation dialog
+- **Cancel**: `Hủy tắt máy`, `cancel shutdown` — cancels pending command
+- **Security**: Commands only work in desktop app via Electron IPC
+
+### Mascot Improvements
+
+- **Background removal**: All 22 mascot PNG assets processed with `rembg` (u2netp model, 4.5MB)
+  - Originals backed up to `assets/backup/`
+  - Clean edges for any background color
+- **Crossfade animation**: Smooth image transitions between states
+  - 300ms CSS opacity transition
+  - Preloads new image before swapping
+  - No visual flash during state changes
+
+### Cache Migration
+
+System caches migrated to `D:\Cache\` to save SSD space:
+
+| Cache | Size | Junction Link |
+|-------|------|---------------|
+| rembg (u2netp) | 4.5 MB | `C:\Users\...\.u2net` |
+| Python packages | 1.1 GB | `C:\Users\...\.cache` |
+| npm cache | 3.5 GB | `%LocalAppData%\npm-cache` |
+| npm global | 1.3 GB | `%AppData%\npm` |
+
+**Total saved**: ~6 GB on C:\ drive
+
+### Bug Fixes
+
+- **Wake word self-trigger**: Bot no longer hears its own TTS output and re-triggers
+  - Audio playback routes through `audioPlaybackController` (single source of truth)
+  - `pauseWakeWord` / `resumeWakeWord` with 400ms delay to avoid echo
+- **Reminder DB migration**: `repeat_interval` column added automatically via `ALTER TABLE`
+- **Session cleanup**: Fixed `stats.stream_count` error in `main.py`
+- **Vietnamese diacritics**: All mock responses now use proper Vietnamese (`trợ lý`, `tiếng Việt`, etc.)
+
+### Files Changed (v1.6)
+
+| File | Change |
+|---|---|
+| `backend/.env` | Added DashScope/Qwen configuration |
+| `backend/app/config.py` | Added `dashscope_api_key`, `dashscope_base_url`, `dashscope_llm_model`, `dashscope_stt_model` |
+| `backend/app/providers/llm.py` | Added `_is_qwen_provider()` + Qwen support for all LLM functions |
+| `backend/app/providers/llm_stream.py` | Added Qwen streaming support |
+| `backend/app/providers/stt.py` | Added `_transcribe_with_dashscope()` + dashscope provider |
+| `backend/app/services/replanner.py` | Added Qwen support for replanning |
+| `backend/app/services/tool_router.py` | Added `system` tool intent |
+| `backend/app/services/entity_extractor.py` | Added `_extract_system_command()` with delay/app parsing |
+| `backend/app/services/chat_flow.py` | Added system command routing |
+| `backend/app/providers/llm.py` | Vietnamese diacritics in mock responses |
+| `desktop/main.js` | Added `executeSystemCommand`/`cancelSystemCommand` IPC handlers |
+| `desktop/preload.js` | Exposed system command IPC |
+| `frontend/src/App.tsx` | System command dispatch, audio playback subscription |
+| `frontend/src/types.ts` | Added `"system_command"` to `ChatAction` |
+| `frontend/src/desktop.d.ts` | Added system command types |
+| `frontend/src/utils/diagnostics.ts` | Added system command category |
+| `frontend/src/components/KeoBotAnimatedMascot.tsx` | Crossfade animation |
+| `frontend/src/styles.css` | `.keobot-image--prev` layer |
+| `frontend/src/hooks/useWakeWord.ts` | `pauseWakeWord`/`resumeWakeWord` |
+| `frontend/src/utils/audioPlaybackController.ts` | Single source of truth for playback state |
+| `assets/` | 22 mascot PNGs with background removed |
+
+---
 
 ## v1.5 — Code Signing & Windows Trust Preparation
 
