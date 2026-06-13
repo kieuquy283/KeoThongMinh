@@ -2,7 +2,7 @@ const MAX_EVENTS = 200;
 
 export type DiagnosticEvent = {
   ts: string;
-  category: "voice_session" | "audio_playback" | "wake_word" | "reminder" | "tool_provider" | "app" | "error";
+  category: "voice_session" | "audio_playback" | "wake_word" | "reminder" | "tool_provider" | "app" | "system_command" | "error";
   message: string;
   meta?: Record<string, unknown>;
 };

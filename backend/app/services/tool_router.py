@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from app.services.entity_extractor import extract_entities
 
-ToolIntent = Literal["weather", "time", "currency", "news_search", "general_search", "none"]
+ToolIntent = Literal["weather", "time", "currency", "news_search", "general_search", "system", "none"]
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ TIME_HINTS = ("may gio", "gio o", "bay gio", "time in")
 CURRENCY_HINTS = ("ty gia", "usd", "vnd", "eur", "jpy", "doi tien", "gia tien")
 NEWS_HINTS = ("tin moi", "tin tuc", "tin ai", "news")
 SEARCH_HINTS = ("tim thong tin moi", "tim thong tin", "cap nhat", "tra cuu", "search")
+SYSTEM_HINTS = ("tat may", "shutdown", "khoi dong lai", "restart", "ngu", "sleep", "mo app", "mo ung dung", "dong app", "dong ung dung")
 
 TOOL_CONFIDENCE_THRESHOLD = 0.65
 
@@ -37,6 +38,7 @@ def detect_tool_intent(user_text: str, context_turns: list[dict[str, str]] | Non
         _score_currency(normalized, entities),
         _score_news(normalized, entities),
         _score_search(normalized, entities),
+        _score_system(normalized, entities),
     ]
     best_intent, best_confidence = max(candidates, key=lambda item: item[1])
 
@@ -102,6 +104,14 @@ def _score_search(normalized: str, entities: dict[str, Any]) -> tuple[ToolIntent
     return "general_search", 0.68
 
 
+def _score_system(normalized: str, entities: dict[str, Any]) -> tuple[ToolIntent, float]:
+    if not any(hint in normalized for hint in SYSTEM_HINTS):
+        return "none", 0.0
+    if entities.get("system_command"):
+        return "system", 0.95
+    return "system", 0.75
+
+
 def _detect_prev_tool_intent(turns: list[dict[str, str]]) -> ToolIntent:
     for t in reversed(turns):
         if t["role"] == "user":
@@ -117,6 +127,8 @@ def _detect_prev_tool_intent(turns: list[dict[str, str]]) -> ToolIntent:
                 return "news_search"
             if any(hint in prev_normalized for hint in SEARCH_HINTS):
                 return "general_search"
+            if any(hint in prev_normalized for hint in SYSTEM_HINTS):
+                return "system"
     return "none"
 
 

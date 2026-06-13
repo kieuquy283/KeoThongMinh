@@ -98,4 +98,8 @@ contextBridge.exposeInMainWorld("keobotDesktop", {
 
   // Knowledge file picker
   chooseKnowledgeFiles: () => ipcRenderer.invoke("keobot:chooseKnowledgeFiles"),
+
+  // System commands
+  executeSystemCommand: (command, options) => ipcRenderer.invoke("keobot:executeSystemCommand", command, options),
+  cancelSystemCommand: () => ipcRenderer.invoke("keobot:cancelSystemCommand"),
 });

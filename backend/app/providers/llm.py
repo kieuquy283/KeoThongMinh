@@ -7,6 +7,10 @@ from typing import Any
 from app.config import get_settings
 from app.schemas import KeoBotLLMResponse
 
+def _is_qwen_provider(provider: str) -> bool:
+    return provider.startswith("qwen") or provider == "dashscope"
+
+
 ALLOWED_EMOTIONS: set[str] = {
     "neutral",
     "happy",
@@ -165,12 +169,22 @@ async def generate_keobot_response(user_text: str, memory_context: dict[str, Any
 
     memory_prompt = _format_memory_context(memory_context)
     conv_prompt = CONVERSATION_CONTEXT_PROMPT.format(conversation_context) if conversation_context else ""
-    if provider == "openai":
-        if not settings.openai_api_key:
-            raise RuntimeError("Thieu OPENAI_API_KEY cho LLM provider openai.")
-        from openai import OpenAI
-
-        client = OpenAI(api_key=settings.openai_api_key)
+    if provider == "openai" or _is_qwen_provider(provider):
+        if provider == "openai":
+            if not settings.openai_api_key:
+                raise RuntimeError("Thieu OPENAI_API_KEY cho LLM provider openai.")
+            from openai import OpenAI
+            client = OpenAI(api_key=settings.openai_api_key)
+            model = settings.openai_chat_model
+        else:
+            if not settings.dashscope_api_key:
+                raise RuntimeError("Thieu DASHSCOPE_API_KEY cho LLM provider qwen/dashscope.")
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=settings.dashscope_api_key,
+                base_url=settings.dashscope_base_url,
+            )
+            model = settings.dashscope_llm_model
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         if conv_prompt:
             messages.append({"role": "system", "content": conv_prompt})
@@ -178,7 +192,7 @@ async def generate_keobot_response(user_text: str, memory_context: dict[str, Any
             messages.append({"role": "system", "content": memory_prompt})
         messages.append({"role": "user", "content": user_text})
         response = client.chat.completions.create(
-            model=settings.openai_chat_model,
+            model=model,
             temperature=0.6,
             response_format={"type": "json_object"},
             messages=messages,
@@ -225,14 +239,24 @@ async def generate_keobot_tool_response(user_text: str, tool_name: str, tool_res
         prompt_parts.insert(0, f"Lich su hoi thoai:\n{conversation_context}")
     prompt = "\n".join(prompt_parts)
 
-    if provider == "openai":
-        if not settings.openai_api_key:
-            raise RuntimeError("Thieu OPENAI_API_KEY cho LLM provider openai.")
-        from openai import OpenAI
-
-        client = OpenAI(api_key=settings.openai_api_key)
+    if provider == "openai" or _is_qwen_provider(provider):
+        if provider == "openai":
+            if not settings.openai_api_key:
+                raise RuntimeError("Thieu OPENAI_API_KEY cho LLM provider openai.")
+            from openai import OpenAI
+            client = OpenAI(api_key=settings.openai_api_key)
+            model = settings.openai_chat_model
+        else:
+            if not settings.dashscope_api_key:
+                raise RuntimeError("Thieu DASHSCOPE_API_KEY cho LLM provider qwen/dashscope.")
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=settings.dashscope_api_key,
+                base_url=settings.dashscope_base_url,
+            )
+            model = settings.dashscope_llm_model
         response = client.chat.completions.create(
-            model=settings.openai_chat_model,
+            model=model,
             temperature=0.2,
             response_format={"type": "json_object"},
             messages=[
@@ -304,13 +328,24 @@ async def generate_conversation_summary(turns: list[dict[str, str]]) -> str:
         topics = "; ".join(user_msgs[:3])
         return f"Nguoi dung da hoi: {topics}" if topics else "Hoi thoai ngan."
 
-    if provider == "openai":
-        if not settings.openai_api_key:
-            return "Hoi thoai khong duoc tom tat (thieu API key)."
-        from openai import OpenAI
-        client = OpenAI(api_key=settings.openai_api_key)
+    if provider == "openai" or _is_qwen_provider(provider):
+        if provider == "openai":
+            if not settings.openai_api_key:
+                return "Hoi thoai khong duoc tom tat (thieu API key)."
+            from openai import OpenAI
+            client = OpenAI(api_key=settings.openai_api_key)
+            model = settings.openai_chat_model
+        else:
+            if not settings.dashscope_api_key:
+                return "Hoi thoai khong duoc tom tat (thieu API key)."
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=settings.dashscope_api_key,
+                base_url=settings.dashscope_base_url,
+            )
+            model = settings.dashscope_llm_model
         response = client.chat.completions.create(
-            model=settings.openai_chat_model,
+            model=model,
             temperature=0.3,
             messages=[
                 {"role": "system", "content": SUMMARIZE_SYSTEM_PROMPT},

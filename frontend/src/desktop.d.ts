@@ -76,6 +76,10 @@ declare global {
         error?: string;
       }>;
 
+      // System commands
+      executeSystemCommand: (command: string, options?: { delaySeconds?: number; appName?: string }) => Promise<{ ok: boolean; scheduled?: boolean; delaySeconds?: number; error?: string }>;
+      cancelSystemCommand: () => Promise<{ ok: boolean; canceled?: boolean; error?: string }>;
+
       // Update events
       onUpdateStatus: (callback: (status: {
         status: "idle" | "checking" | "update_available" | "update_not_available" | "downloading" | "downloaded" | "error";

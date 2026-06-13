@@ -412,6 +412,14 @@ def _run_tool(intent: str, query: str, entities: dict[str, Any]) -> dict[str, An
         return get_weather_info(query, entities=entities)
     if intent in {"news_search", "general_search"}:
         return get_search_info(query, intent, entities=entities)
+    if intent == "system":
+        return {
+            "is_available": True,
+            "system_command": entities.get("system_command"),
+            "delay_seconds": entities.get("delay_seconds") or 0,
+            "app_name": entities.get("app_name"),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
     return {
         "is_available": False,
         "message": "Unsupported tool.",

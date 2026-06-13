@@ -1009,6 +1009,86 @@ app.whenReady().then(() => {
     }
   });
 
+  // System commands (shutdown, restart, sleep, open/close app)
+  let systemCommandTimer = null;
+  ipcMain.handle("keobot:executeSystemCommand", async (_event, command, options = {}) => {
+    const { delaySeconds = 0, appName = "" } = options;
+    if (mainLogger) mainLogger.info(`System command requested: ${command}, delay=${delaySeconds}s, app=${appName}`);
+
+    // Show confirmation for destructive commands
+    const destructiveCommands = new Set(["shutdown", "restart"]);
+    if (destructiveCommands.has(command)) {
+      const buttonIndex = dialog.showMessageBoxSync(mainWindow, {
+        type: "warning",
+        title: "Xác nhận lệnh hệ thống",
+        message: `Bạn có chắc muốn ${command === "shutdown" ? "tắt máy" : "khởi động lại máy"}${delaySeconds > 0 ? ` sau ${delaySeconds} giây` : ""}?`,
+        buttons: ["Hủy", "Xác nhận"],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (buttonIndex !== 1) {
+        return { ok: false, canceled: true };
+      }
+    }
+
+    // Cancel any existing timer
+    if (systemCommandTimer) {
+      clearTimeout(systemCommandTimer);
+      systemCommandTimer = null;
+    }
+
+    const execute = () => {
+      try {
+        if (command === "shutdown") {
+          spawn("shutdown", ["/s", "/t", "0"], { windowsHide: true, detached: true });
+        } else if (command === "restart") {
+          spawn("shutdown", ["/r", "/t", "0"], { windowsHide: true, detached: true });
+        } else if (command === "sleep") {
+          spawn("rundll32", ["powrprof.dll,SetSuspendState", "0,1,0"], { windowsHide: true, detached: true });
+        } else if (command === "open_app") {
+          if (appName) {
+            spawn("cmd", ["/c", "start", "", appName], { windowsHide: true, detached: true });
+          } else {
+            return { ok: false, error: "Thiếu tên ứng dụng." };
+          }
+        } else if (command === "close_app") {
+          if (appName) {
+            spawn("taskkill", ["/IM", appName, "/F"], { windowsHide: true, detached: true });
+          } else {
+            return { ok: false, error: "Thiếu tên ứng dụng." };
+          }
+        } else {
+          return { ok: false, error: `Lệnh không hỗ trợ: ${command}` };
+        }
+        if (mainLogger) mainLogger.info(`System command executed: ${command}`);
+        return { ok: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (mainLogger) mainLogger.error(`System command failed: ${msg}`);
+        return { ok: false, error: msg };
+      }
+    };
+
+    if (delaySeconds > 0) {
+      systemCommandTimer = setTimeout(() => {
+        execute();
+      }, delaySeconds * 1000);
+      return { ok: true, scheduled: true, delaySeconds };
+    }
+
+    return execute();
+  });
+
+  ipcMain.handle("keobot:cancelSystemCommand", async () => {
+    if (systemCommandTimer) {
+      clearTimeout(systemCommandTimer);
+      systemCommandTimer = null;
+      if (mainLogger) mainLogger.info("System command canceled");
+      return { ok: true, canceled: true };
+    }
+    return { ok: false, error: "Không có lệnh nào đang chờ." };
+  });
+
   // Knowledge file picker
   ipcMain.handle("keobot:chooseKnowledgeFiles", async () => {
     try {

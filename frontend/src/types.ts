@@ -11,7 +11,7 @@ export type Emotion =
   | "calm"
   | "confused";
 
-export type ChatAction = "reminder_created" | "tool_response" | "memory_updated" | "memory_deleted";
+export type ChatAction = "reminder_created" | "tool_response" | "memory_updated" | "memory_deleted" | "system_command";
 export type ToolUsed = "weather" | "time" | "currency" | "news_search" | "general_search" | "knowledge" | "none";
 export type ConversationMode = "manual" | "auto";
 

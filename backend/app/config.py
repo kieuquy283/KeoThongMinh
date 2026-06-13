@@ -47,6 +47,11 @@ class Settings:
     gemini_api_key: str | None = get_env("GEMINI_API_KEY") or get_env("GOOGLE_API_KEY")
     gemini_model: str = get_env("GEMINI_MODEL", "gemini-2.0-flash") or "gemini-2.0-flash"
 
+    dashscope_api_key: str | None = get_env("DASHSCOPE_API_KEY")
+    dashscope_base_url: str | None = get_env("DASHSCOPE_BASE_URL")
+    dashscope_llm_model: str = get_env("DASHSCOPE_LLM_MODEL", "qwen3.6-plus") or "qwen3.6-plus"
+    dashscope_stt_model: str = get_env("DASHSCOPE_STT_MODEL", "Qwen3-ASR-Flash") or "Qwen3-ASR-Flash"
+
     currency_provider: str = get_env("CURRENCY_PROVIDER", "none") or "none"
     exchange_rate_api_key: str | None = get_env("EXCHANGE_RATE_API_KEY")
     exchange_rate_api_url: str | None = get_env("EXCHANGE_RATE_API_URL")

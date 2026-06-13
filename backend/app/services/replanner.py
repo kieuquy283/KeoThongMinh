@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from app.providers.llm import _is_qwen_provider
 from app.services.event_bus import Event, EventType, get_event_bus
 from app.services.memory_store import get_memory_store
 from app.services.stream_manager import StreamState, get_stream_manager
@@ -236,11 +237,22 @@ async def decide_replan(input_data: ReplanInput) -> ReplanOutput:
 
     prompt = "\n".join(prompt_parts)
 
-    if provider == "openai":
-        from openai import OpenAI
-        client = OpenAI(api_key=settings.openai_api_key)
+    if provider == "openai" or _is_qwen_provider(provider):
+        if provider == "openai":
+            from openai import OpenAI
+            client = OpenAI(api_key=settings.openai_api_key)
+            model = settings.openai_chat_model
+        else:
+            if not settings.dashscope_api_key:
+                return _heuristic_decide(input_data)
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=settings.dashscope_api_key,
+                base_url=settings.dashscope_base_url,
+            )
+            model = settings.dashscope_llm_model
         response = client.chat.completions.create(
-            model=settings.openai_chat_model,
+            model=model,
             temperature=0.2,
             response_format={"type": "json_object"},
             messages=[

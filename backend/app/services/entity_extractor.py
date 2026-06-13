@@ -119,6 +119,22 @@ TOPIC_ALIASES: dict[str, str] = {
 }
 
 
+SYSTEM_COMMAND_ALIASES: dict[str, str] = {
+    "tat may": "shutdown",
+    "shutdown": "shutdown",
+    "khoi dong lai": "restart",
+    "restart": "restart",
+    "ngu": "sleep",
+    "sleep": "sleep",
+    "mo app": "open_app",
+    "mo ung dung": "open_app",
+    "open app": "open_app",
+    "dong app": "close_app",
+    "dong ung dung": "close_app",
+    "close app": "close_app",
+}
+
+
 def extract_entities(user_text: str) -> dict[str, str | float | None]:
     normalized = _normalize_text(user_text)
     entities: dict[str, str | float | None] = {
@@ -129,6 +145,9 @@ def extract_entities(user_text: str) -> dict[str, str | float | None]:
         "target_currency": None,
         "search_query": None,
         "news_topic": None,
+        "system_command": None,
+        "delay_seconds": None,
+        "app_name": None,
     }
 
     entities["location"] = _extract_location(normalized)
@@ -139,6 +158,10 @@ def extract_entities(user_text: str) -> dict[str, str | float | None]:
     entities["target_currency"] = target_currency
     entities["search_query"] = _extract_search_query(normalized)
     entities["news_topic"] = _extract_news_topic(normalized)
+    system_cmd, delay, app_name = _extract_system_command(normalized)
+    entities["system_command"] = system_cmd
+    entities["delay_seconds"] = delay
+    entities["app_name"] = app_name
     return entities
 
 
@@ -207,6 +230,44 @@ def _extract_news_topic(normalized: str) -> str | None:
         return matched
 
     return None
+
+
+def _extract_system_command(normalized: str) -> tuple[str | None, float | None, str | None]:
+    command = None
+    for alias, canonical in SYSTEM_COMMAND_ALIASES.items():
+        if alias in normalized:
+            command = canonical
+            break
+
+    if not command:
+        return None, None, None
+
+    # Extract delay: "5 phut nua", "10 phut", "1 tieng"
+    delay = None
+    delay_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(phut|tieng|gio|h|m)\s*(nua|sau|later)?", normalized)
+    if delay_match:
+        value = float(delay_match.group(1).replace(",", "."))
+        unit = delay_match.group(2)
+        if unit in ("tieng", "gio", "h"):
+            delay = value * 3600
+        elif unit in ("phut", "m"):
+            delay = value * 60
+        else:
+            delay = value
+
+    # Extract app name for open/close app
+    app_name = None
+    if command in ("open_app", "close_app"):
+        app_match = re.search(r"(?:mo|dong)\s+(?:app|ung dung)\s+(.+)", normalized)
+        if app_match:
+            app_name = app_match.group(1).strip()
+        else:
+            # Try "app X" pattern
+            app_match2 = re.search(r"(?:app|ung dung)\s+(.+)", normalized)
+            if app_match2:
+                app_name = app_match2.group(1).strip()
+
+    return command, delay, app_name
 
 
 def _match_after_markers(normalized: str, markers: tuple[str, ...]) -> str | None:

@@ -469,6 +469,25 @@ export default function App() {
         return [...next, createdReminder].sort((left, right) => left.remind_at.localeCompare(right.remind_at));
       });
     }
+
+    if (response.action === "system_command" && response.tool_result && isDesktopMode) {
+      const toolResult = response.tool_result as Record<string, unknown>;
+      const systemCommand = toolResult.system_command as string | undefined;
+      const delaySeconds = (toolResult.delay_seconds as number) || 0;
+      const appName = (toolResult.app_name as string) || "";
+      if (systemCommand && window.keobotDesktop?.executeSystemCommand) {
+        void window.keobotDesktop.executeSystemCommand(systemCommand, {
+          delaySeconds,
+          appName,
+        }).then((result: { ok: boolean; scheduled?: boolean; error?: string }) => {
+          if (result.ok) {
+            logDiagnostic("system_command", `Scheduled ${systemCommand}`, { delaySeconds, scheduled: result.scheduled });
+          } else {
+            logDiagnostic("system_command", `Failed ${systemCommand}`, { error: result.error });
+          }
+        });
+      }
+    }
   };
 
   const handleRecorderError = (message: string | null) => {
