@@ -11,7 +11,7 @@ export function RealtimeVoiceChat() {
 
   const status = state.isRecording
     ? "listening"
-    : state.isPlaying
+    : state.isProcessing || state.isPlaying
     ? "speaking"
     : "idle";
 
@@ -45,9 +45,11 @@ export function RealtimeVoiceChat() {
           </button>
         ) : (
           <>
-            <button onClick={actions.stop} className="btn-stop">
-              Dừng
-            </button>
+            {state.isRecording ? (
+              <button onClick={actions.stop} className="btn-stop">
+                Dừng nói & Gửi
+              </button>
+            ) : null}
             <button onClick={handleInterrupt} className="btn-interrupt">
               Ngắt lời
             </button>
@@ -58,6 +60,7 @@ export function RealtimeVoiceChat() {
       <div className="status-bar">
         {state.isConnected ? "🟢 Đã kết nối" : "🔴 Chưa kết nối"} |
         {state.isRecording ? " 🎤 Đang thu" : ""} |
+        {state.isProcessing ? " ⚙️ Đang xử lý" : ""} |
         {state.isPlaying ? " 🔊 Đang phát" : ""}
       </div>
     </div>

@@ -6,6 +6,7 @@ import type { Emotion } from "../types";
 export interface RealtimeVoiceChatState {
   isConnected: boolean;
   isRecording: boolean;
+  isProcessing: boolean;
   isPlaying: boolean;
   botText: string;
   emotion: Emotion;
@@ -21,8 +22,15 @@ export interface RealtimeVoiceChatActions {
 const WS_URL = "ws://127.0.0.1:8000/v2/stream-chat";
 
 /**
- * Hook that orchestrates the full-duplex realtime voice chat pipeline
- * via WebSocket to the backend OpenAI Realtime API proxy.
+ * Hook that orchestrates the low-latency streaming voice chat pipeline.
+ *
+ * Flow:
+ *   1. User presses "Start" -> WebSocket opens, microphone records 100ms chunks.
+ *   2. User speaks -> audio chunks are sent via WebSocket.
+ *   3. User presses "Stop" -> recording stops, "finish_turn" is sent.
+ *   4. Backend processes: STT -> LLM streaming -> TTS sentence-by-sentence.
+ *   5. Text tokens arrive immediately; audio chunks are queued for playback.
+ *   6. User can press "Interrupt" at any time to cancel the current turn.
  */
 export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceChatActions] {
   const wsRef = useRef<WebSocket | null>(null);
@@ -31,6 +39,7 @@ export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceCh
   const textBufferRef = useRef<string>("");
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [botText, setBotText] = useState("");
   const [emotion] = useState<Emotion>("neutral");
@@ -75,20 +84,27 @@ export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceCh
             if (frame.data) {
               textBufferRef.current += frame.data;
               setBotText(textBufferRef.current);
+              setIsProcessing(true);
             }
             break;
           }
           case "response_done": {
-            // Response finished; optionally clear text buffer after a delay
-            textBufferRef.current = "";
+            setIsProcessing(false);
+            // Keep text visible for a moment then clear
+            setTimeout(() => {
+              textBufferRef.current = "";
+              setBotText("");
+            }, 3000);
             break;
           }
           case "clear": {
+            setIsProcessing(false);
             textBufferRef.current = "";
             setBotText("");
             break;
           }
           case "error": {
+            setIsProcessing(false);
             setError(frame.data || "Realtime streaming error");
             break;
           }
@@ -101,11 +117,14 @@ export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceCh
     ws.onerror = () => {
       setError("WebSocket connection error");
       setIsConnected(false);
+      setIsRecording(false);
+      setIsProcessing(false);
     };
 
     ws.onclose = () => {
       setIsConnected(false);
       setIsRecording(false);
+      setIsProcessing(false);
       if (playerRef.current) {
         playerRef.current.clear();
       }
@@ -123,6 +142,7 @@ export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceCh
     }
     setIsConnected(false);
     setIsRecording(false);
+    setIsProcessing(false);
     setBotText("");
     textBufferRef.current = "";
   }, [recorderRef]);
@@ -132,7 +152,6 @@ export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceCh
     setBotText("");
     textBufferRef.current = "";
     connect();
-    // Start recording after a short delay to ensure WebSocket is open
     setTimeout(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         recorderRef.start();
@@ -146,11 +165,12 @@ export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceCh
   const stop = useCallback(() => {
     recorderRef.stop();
     setIsRecording(false);
-    // Keep WebSocket open for a moment to let final chunks flush
-    setTimeout(() => {
-      disconnect();
-    }, 500);
-  }, [recorderRef, disconnect]);
+    // Send finish_turn to trigger backend processing
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ event: "finish_turn" }));
+      setIsProcessing(true);
+    }
+  }, [recorderRef]);
 
   const interrupt = useCallback(() => {
     if (playerRef.current) {
@@ -161,6 +181,7 @@ export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceCh
     }
     setBotText("");
     textBufferRef.current = "";
+    setIsProcessing(false);
   }, []);
 
   // Cleanup on unmount
@@ -173,6 +194,7 @@ export function useRealtimeVoiceChat(): [RealtimeVoiceChatState, RealtimeVoiceCh
   const state: RealtimeVoiceChatState = {
     isConnected,
     isRecording,
+    isProcessing,
     isPlaying,
     botText,
     emotion,
